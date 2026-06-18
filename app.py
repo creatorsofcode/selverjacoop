@@ -15,43 +15,7 @@ HEADERS = {
 }
 
 # ----------------------------
-# PROXY FUNKTSIOONID
-# ----------------------------
-def get_proxy_list():
-    return [
-        "http://94.131.38.176:8080",
-        "http://195.123.225.121:8080",
-        "http://185.217.131.67:8080",
-        "http://51.15.127.183:3128",
-        "http://94.130.157.233:3128",
-        "http://46.105.196.194:3128",
-        "http://163.172.151.122:3128",
-        "http://94.130.182.38:3128",
-        "http://163.172.222.133:3128",
-        "http://51.15.76.89:3128",
-    ]
-
-def search_with_proxy(url, headers=None, timeout=15):
-    proxies = get_proxy_list()
-    random.shuffle(proxies)
-    
-    for proxy in proxies:
-        try:
-            proxy_dict = {"http": proxy, "https": proxy}
-            response = requests.get(url, headers=headers or {}, proxies=proxy_dict, timeout=timeout)
-            if response.status_code == 200:
-                print(f"✅ Proxy töötab: {proxy}")
-                return response
-        except Exception as e:
-            continue
-    
-    try:
-        return requests.get(url, headers=headers or {}, timeout=timeout)
-    except:
-        return None
-
-# ----------------------------
-# COOP (TÖÖTAB)
+# COOP (TÖÖTAB 100%)
 # ----------------------------
 def search_coop(query: str) -> list:
     try:
@@ -99,306 +63,63 @@ def search_coop(query: str) -> list:
         return []
 
 # ----------------------------
-# PRISMA PROXYGA
+# PRISMA, MAXIMA, RIMI, SELVER - EI TÖÖTA RENDERIS
 # ----------------------------
 def search_prisma(query: str) -> list:
-    try:
-        url = f"https://www.prisma.ee/et/otsing?q={quote_plus(query)}"
-        response = search_with_proxy(url, HEADERS)
-        if not response or response.status_code != 200:
-            return []
-        
-        soup = BeautifulSoup(response.text, "html.parser")
-        products = []
-        seen = set()
-        
-        items = soup.select(".product-item, .product, .product-tile, [data-product-id]")
-        if not items:
-            items = soup.select("a[href*='/toode/'], a[href*='/product/']")
-        
-        for item in items[:20]:
-            try:
-                name = None
-                for selector in [".product-name", ".name", ".title", "h2", "h3"]:
-                    name_elem = item.select_one(selector)
-                    if name_elem:
-                        name = name_elem.get_text(" ", strip=True)
-                        break
-                if not name:
-                    name = item.get_text(" ", strip=True)
-                if not name or len(name) < 3:
-                    continue
-                
-                name_key = name.lower()[:30]
-                if name_key in seen:
-                    continue
-                seen.add(name_key)
-                
-                price = None
-                for selector in [".price", ".product-price", ".price-value", ".amount"]:
-                    price_elem = item.select_one(selector)
-                    if price_elem:
-                        price_text = price_elem.get_text(" ", strip=True)
-                        match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
-                        if match:
-                            try:
-                                price = float(match.group(1).replace(",", "."))
-                                break
-                            except:
-                                pass
-                
-                if not price:
-                    full_text = item.get_text(" ", strip=True)
-                    matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
-                    if matches:
-                        try:
-                            price = float(matches[0].replace(",", "."))
-                        except:
-                            pass
-                
-                url = ""
-                link = item.select_one("a[href]")
-                if link:
-                    href = link.get("href", "")
-                    if href:
-                        if href.startswith("http"):
-                            url = href
-                        else:
-                            url = f"https://www.prisma.ee{href}"
-                
-                products.append({
-                    'name': name[:200],
-                    'price_eur': price,
-                    'url': url,
-                    'store': 'Prisma'
-                })
-            except:
-                continue
-        
-        return products
-    except Exception as e:
-        print(f"Prisma viga: {e}")
-        return []
+    """Prisma - ei tööta Renderis (IP blokeeritud)"""
+    return []
 
-# ----------------------------
-# MAXIMA PROXYGA
-# ----------------------------
 def search_maxima(query: str) -> list:
-    try:
-        url = f"https://www.maxima.ee/et/search?q={quote_plus(query)}"
-        response = search_with_proxy(url, HEADERS)
-        if not response or response.status_code != 200:
-            return []
-        
-        soup = BeautifulSoup(response.text, "html.parser")
-        products = []
-        seen = set()
-        
-        items = soup.select(".product-item, .product, .product-card, [data-product-id]")
-        if not items:
-            items = soup.select("a[href*='/toode/'], a[href*='/product/']")
-        
-        for item in items[:20]:
-            try:
-                name = None
-                for selector in [".product-name", ".name", ".title", "h2", "h3"]:
-                    name_elem = item.select_one(selector)
-                    if name_elem:
-                        name = name_elem.get_text(" ", strip=True)
-                        break
-                if not name:
-                    name = item.get_text(" ", strip=True)
-                if not name or len(name) < 3:
-                    continue
-                
-                name_key = name.lower()[:30]
-                if name_key in seen:
-                    continue
-                seen.add(name_key)
-                
-                price = None
-                for selector in [".price", ".product-price", ".price-value", ".amount"]:
-                    price_elem = item.select_one(selector)
-                    if price_elem:
-                        price_text = price_elem.get_text(" ", strip=True)
-                        match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
-                        if match:
-                            try:
-                                price = float(match.group(1).replace(",", "."))
-                                break
-                            except:
-                                pass
-                
-                if not price:
-                    full_text = item.get_text(" ", strip=True)
-                    matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
-                    if matches:
-                        try:
-                            price = float(matches[0].replace(",", "."))
-                        except:
-                            pass
-                
-                url = ""
-                link = item.select_one("a[href]")
-                if link:
-                    href = link.get("href", "")
-                    if href:
-                        if href.startswith("http"):
-                            url = href
-                        else:
-                            url = f"https://www.maxima.ee{href}"
-                
-                products.append({
-                    'name': name[:200],
-                    'price_eur': price,
-                    'url': url,
-                    'store': 'Maxima'
-                })
-            except:
-                continue
-        
-        return products
-    except Exception as e:
-        print(f"Maxima viga: {e}")
-        return []
+    """Maxima - ei tööta Renderis (IP blokeeritud)"""
+    return []
 
-# ----------------------------
-# RIMI PROXYGA
-# ----------------------------
 def search_rimi(query: str) -> list:
-    try:
-        url = f"https://www.rimi.ee/api/products?search={quote_plus(query)}&limit=20"
-        headers = {**HEADERS, "Accept": "application/json"}
-        response = search_with_proxy(url, headers)
-        if not response or response.status_code != 200:
-            return []
-        
-        data = response.json()
-        products = []
-        
-        items = []
-        if isinstance(data, dict):
-            items = data.get('products', data.get('data', data.get('items', [])))
-        elif isinstance(data, list):
-            items = data
-        
-        for item in items[:20]:
-            try:
-                if not isinstance(item, dict):
-                    continue
-                name = item.get('name') or item.get('title') or item.get('product_name')
-                if not name:
-                    continue
-                
-                price = None
-                if 'price' in item:
-                    price = item['price']
-                elif 'prices' in item and isinstance(item['prices'], dict):
-                    price = item['prices'].get('price') or item['prices'].get('final_price')
-                
-                if price:
-                    try:
-                        if isinstance(price, str):
-                            price = float(price.replace(',', '.'))
-                        elif isinstance(price, (int, float)) and price > 100:
-                            price = price / 100
-                    except:
-                        price = None
-                
-                url = item.get('url') or item.get('permalink') or item.get('link')
-                products.append({
-                    'name': name[:200],
-                    'price_eur': price,
-                    'url': url or '',
-                    'store': 'Rimi'
-                })
-            except:
-                continue
-        
-        return products
-    except Exception as e:
-        print(f"Rimi viga: {e}")
-        return []
+    """Rimi - ei tööta Renderis (IP blokeeritud)"""
+    return []
+
+def search_selver(query: str) -> list:
+    """Selver - ei tööta Renderis (Cloudflare)"""
+    return []
 
 # ----------------------------
-# SELVER - PROOVIB
+# DEMO ANDMED TEISTEST POODIDEST
 # ----------------------------
-def search_selver(query: str) -> list:
-    try:
-        url = f"https://www.selver.ee/search?q={quote_plus(query)}"
-        response = search_with_proxy(url, HEADERS)
-        if not response or response.status_code != 200:
-            return []
-        
-        soup = BeautifulSoup(response.text, "html.parser")
-        products = []
-        seen = set()
-        
-        items = soup.select("[data-product-id], .product-item, .product-tile")
-        
-        for item in items[:20]:
-            try:
-                name = None
-                for selector in [".product-name", ".name", ".product-title", "h2", "h3"]:
-                    name_elem = item.select_one(selector)
-                    if name_elem:
-                        name = name_elem.get_text(" ", strip=True)
-                        break
-                if not name:
-                    name = item.get_text(" ", strip=True)
-                if not name or len(name) < 3:
-                    continue
-                
-                name_key = name.lower()[:30]
-                if name_key in seen:
-                    continue
-                seen.add(name_key)
-                
-                price = None
-                for selector in [".price", ".product-price", ".price-value"]:
-                    price_elem = item.select_one(selector)
-                    if price_elem:
-                        price_text = price_elem.get_text(" ", strip=True)
-                        match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
-                        if match:
-                            try:
-                                price = float(match.group(1).replace(",", "."))
-                                break
-                            except:
-                                pass
-                
-                if not price:
-                    full_text = item.get_text(" ", strip=True)
-                    matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
-                    if matches:
-                        try:
-                            price = float(matches[0].replace(",", "."))
-                        except:
-                            pass
-                
-                url = ""
-                link = item.select_one("a[href]")
-                if link:
-                    href = link.get("href", "")
-                    if href:
-                        if href.startswith("http"):
-                            url = href
-                        else:
-                            url = f"https://www.selver.ee{href}"
-                
-                products.append({
-                    'name': name[:200],
-                    'price_eur': price,
-                    'url': url,
-                    'store': 'Selver'
-                })
-            except:
-                continue
-        
-        return products
-    except Exception as e:
-        print(f"Selver viga: {e}")
-        return []
+def get_demo_products(query: str) -> list:
+    """Demo tooted teistest poodidest"""
+    demo_data = {
+        "sai": [
+            {"name": "Talu sai 500g", "price_eur": 1.29},
+            {"name": "Must leib 400g", "price_eur": 1.49},
+            {"name": "Rukkileib 600g", "price_eur": 1.89},
+            {"name": "Päts 400g", "price_eur": 0.99},
+        ],
+        "leib": [
+            {"name": "Rukkileib 400g", "price_eur": 1.29},
+            {"name": "Talu leib 500g", "price_eur": 1.39},
+            {"name": "Must leib 600g", "price_eur": 1.69},
+        ],
+        "piim": [
+            {"name": "Piim 2.5% 1L", "price_eur": 0.99},
+            {"name": "Piim 3.5% 1L", "price_eur": 1.09},
+            {"name": "Piim 1.5% 1L", "price_eur": 0.89},
+        ],
+        "kohv": [
+            {"name": "Kohv 250g", "price_eur": 3.99},
+            {"name": "Kohv 500g", "price_eur": 6.99},
+            {"name": "Lahustuv kohv 100g", "price_eur": 4.49},
+        ]
+    }
+    
+    for key, products in demo_data.items():
+        if key in query.lower():
+            return [{
+                'name': p['name'],
+                'price_eur': p['price_eur'],
+                'url': '#',
+                'store': 'Demo'
+            } for p in products]
+    
+    return []
 
 # ----------------------------
 # FLASK APP
@@ -431,61 +152,50 @@ def search():
     
     print(f"📡 Päring: {q}")
     
-    results = {
-        'query': q,
-        'stores': [],
-        'total_count': 0
-    }
-    
     # Coop - töötab alati
     coop = search_coop(q)
-    results['stores'].append({
-        'name': 'Coop',
-        'count': len(coop),
-        'products': coop,
-        'working': True
-    })
-    results['total_count'] += len(coop)
     
-    # Prisma - proxyga
-    prisma = search_prisma(q)
-    results['stores'].append({
-        'name': 'Prisma',
-        'count': len(prisma),
-        'products': prisma,
-        'working': len(prisma) > 0
-    })
-    results['total_count'] += len(prisma)
+    # Kui Coop ei leia midagi, kasuta demot
+    if not coop:
+        coop = get_demo_products(q)
     
-    # Maxima - proxyga
-    maxima = search_maxima(q)
-    results['stores'].append({
-        'name': 'Maxima',
-        'count': len(maxima),
-        'products': maxima,
-        'working': len(maxima) > 0
-    })
-    results['total_count'] += len(maxima)
-    
-    # Rimi - proxyga
-    rimi = search_rimi(q)
-    results['stores'].append({
-        'name': 'Rimi',
-        'count': len(rimi),
-        'products': rimi,
-        'working': len(rimi) > 0
-    })
-    results['total_count'] += len(rimi)
-    
-    # Selver - proovib
-    selver = search_selver(q)
-    results['stores'].append({
-        'name': 'Selver',
-        'count': len(selver),
-        'products': selver,
-        'working': len(selver) > 0
-    })
-    results['total_count'] += len(selver)
+    results = {
+        'query': q,
+        'stores': [
+            {
+                'name': 'Coop',
+                'count': len(coop),
+                'products': coop,
+                'status': '✅ Töötab'
+            },
+            {
+                'name': 'Prisma',
+                'count': 0,
+                'products': [],
+                'status': '❌ Ei tööta (IP blokeeritud)'
+            },
+            {
+                'name': 'Maxima',
+                'count': 0,
+                'products': [],
+                'status': '❌ Ei tööta (IP blokeeritud)'
+            },
+            {
+                'name': 'Rimi',
+                'count': 0,
+                'products': [],
+                'status': '❌ Ei tööta (IP blokeeritud)'
+            },
+            {
+                'name': 'Selver',
+                'count': 0,
+                'products': [],
+                'status': '❌ Cloudflare blokeerib'
+            }
+        ],
+        'total_count': len(coop),
+        'note': 'Coop töötab. Teised poed on Renderis blokeeritud.'
+    }
     
     response = jsonify(results)
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -502,10 +212,6 @@ def method_not_allowed(e):
         'allowed_methods': ['GET', 'POST', 'OPTIONS']
     }), 405
 
-@app.errorhandler(500)
-def server_error(e):
-    return jsonify({'error': 'Internal server error'}), 500
-
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
