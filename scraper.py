@@ -398,8 +398,12 @@ def scrape(query: str = "sai", max_pages: int = 5) -> List[Product]:
         request_error = str(exc)
         request_blocked = isinstance(exc, SelverBlockedError)
 
-    enable_playwright_fallback = os.getenv("SELVER_ENABLE_PLAYWRIGHT_FALLBACK", "1") == "1"
+    # On Windows local dev, Playwright fallback can make requests appear stuck.
+    default_playwright_fallback = "0" if os.name == "nt" else "1"
+    enable_playwright_fallback = os.getenv("SELVER_ENABLE_PLAYWRIGHT_FALLBACK", default_playwright_fallback) == "1"
     if not enable_playwright_fallback:
+        if request_blocked:
+            raise SelverBlockedError(request_error or "Selver anti-bot/login block")
         raise RuntimeError(
             request_error
             or "Selver scraping failed. If blocked, configure SELVER_PROXY_URL."
