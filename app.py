@@ -67,14 +67,9 @@ def search_coop(query):
     except Exception as e:
         return [{"error": str(e)}]
 
-
 @app.route("/")
 def home():
-    return jsonify({
-        "status": "online",
-        "service": "Selver + Coop API"
-    })
-
+    return render_template("index.html")
 
 @app.route("/search")
 def search():
