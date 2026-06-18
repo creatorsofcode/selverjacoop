@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eesti poodide hinnavõrdlus</title>
+    <title>Coop hinnavõrdlus</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -12,7 +12,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
             background: white;
             border-radius: 12px;
@@ -21,6 +21,14 @@
         }
         h1 { color: #333; margin-bottom: 5px; }
         .subtitle { color: #666; margin-bottom: 20px; font-size: 14px; }
+        .notice {
+            background: #d4edda;
+            border: 1px solid #28a745;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #155724;
+        }
         .search-box {
             display: flex;
             gap: 10px;
@@ -35,11 +43,11 @@
         }
         .search-box input:focus {
             outline: none;
-            border-color: #007bff;
+            border-color: #28a745;
         }
         .search-box button {
             padding: 12px 30px;
-            background: #007bff;
+            background: #28a745;
             color: white;
             border: none;
             border-radius: 8px;
@@ -47,7 +55,7 @@
             cursor: pointer;
             transition: background 0.3s;
         }
-        .search-box button:hover { background: #0056b3; }
+        .search-box button:hover { background: #1e7e34; }
         .loading {
             text-align: center;
             padding: 40px;
@@ -59,7 +67,7 @@
             width: 40px;
             height: 40px;
             border: 4px solid #f3f3f3;
-            border-top: 4px solid #007bff;
+            border-top: 4px solid #28a745;
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
@@ -69,17 +77,17 @@
         }
         .results-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: 1fr;
             gap: 20px;
         }
         .store-card {
             background: #f8f9fa;
             border-radius: 8px;
-            padding: 15px;
-            border-top: 4px solid #28a745;
+            padding: 20px;
+            border-left: 4px solid #28a745;
         }
         .store-card.not-working {
-            border-top-color: #dc3545;
+            border-left-color: #dc3545;
             opacity: 0.6;
         }
         .store-card h2 {
@@ -116,35 +124,25 @@
         }
         .product-item {
             background: white;
-            padding: 10px 12px;
+            padding: 10px 15px;
             margin-bottom: 8px;
             border-radius: 6px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             display: flex;
             justify-content: space-between;
             align-items: center;
-            transition: transform 0.2s;
-        }
-        .product-item:hover {
-            transform: translateX(4px);
         }
         .product-name {
             flex: 1;
             margin-right: 10px;
             font-size: 14px;
             color: #333;
-            word-break: break-word;
         }
         .product-price {
             font-weight: bold;
             color: #28a745;
             font-size: 16px;
             white-space: nowrap;
-        }
-        .product-price.missing {
-            color: #999;
-            font-weight: normal;
-            font-size: 12px;
         }
         .no-results {
             color: #999;
@@ -155,32 +153,34 @@
         .total-count {
             text-align: center;
             padding: 15px;
-            background: #e9ecef;
+            background: #d4edda;
             border-radius: 8px;
             margin-bottom: 20px;
-            font-size: 16px;
-            color: #333;
+            color: #155724;
         }
-        .total-count strong { color: #007bff; }
         @media (max-width: 768px) {
-            .results-grid { grid-template-columns: 1fr; }
             .search-box { flex-direction: column; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🛒 Eesti poodide hinnavõrdlus</h1>
-        <p class="subtitle">Coop · Rimi · Prisma · Maxima · Selver</p>
+        <h1>🛒 Coop hinnavõrdlus</h1>
+        <p class="subtitle">Teised poed on Renderis blokeeritud</p>
+        
+        <div class="notice">
+            ✅ <strong>Coop töötab!</strong> Teised poed (Prisma, Maxima, Rimi, Selver) 
+            on Renderis blokeeritud.
+        </div>
         
         <div class="search-box">
-            <input type="text" id="searchInput" placeholder="Otsi toodet (nt: sai, leib, piim, kohv...)" value="sai">
+            <input type="text" id="searchInput" placeholder="Otsi toodet (nt: sai, leib, piim...)" value="sai">
             <button onclick="search()">🔍 Otsi</button>
         </div>
         
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <div style="margin-top: 15px;">Otsin tooteid...</div>
+            <div style="margin-top: 15px;">Otsin tooteid Coopist...</div>
         </div>
         
         <div id="resultsContainer" style="display: none;">
@@ -217,23 +217,25 @@
             totalContainer.innerHTML = `📊 Leitud <strong>${data.total_count || 0}</strong> toodet`;
             
             container.innerHTML = data.stores.map(store => {
-                const isWorking = store.working !== false;
+                const isWorking = store.status && store.status.includes('Töötab');
                 const workingClass = isWorking ? '' : 'not-working';
-                const statusBadge = isWorking ? 
-                    '<span class="status-badge status-working">✅ Töötab</span>' : 
-                    '<span class="status-badge status-broken">❌ Ei tööta</span>';
                 
                 return `
                     <div class="store-card ${workingClass}">
                         <h2>
-                            <span>🏪 ${store.name} ${statusBadge}</span>
+                            <span>
+                                🏪 ${store.name}
+                                <span class="status-badge ${isWorking ? 'status-working' : 'status-broken'}">
+                                    ${store.status || (isWorking ? '✅ Töötab' : '❌ Ei tööta')}
+                                </span>
+                            </span>
                             <span class="count">(${store.count})</span>
                         </h2>
                         ${store.products && store.products.length > 0 ? 
                             store.products.map(p => `
                                 <div class="product-item">
                                     <div class="product-name">${escapeHtml(p.name || 'Tundmatu')}</div>
-                                    <div class="product-price ${p.price_eur ? '' : 'missing'}">
+                                    <div class="product-price">
                                         ${p.price_eur ? `${p.price_eur.toFixed(2)} €` : 'Hind puudub'}
                                     </div>
                                 </div>
