@@ -1,34 +1,249 @@
 <!DOCTYPE html>
-<html>
+<html lang="et">
 <head>
-    <title>Selver vs Coop</title>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Selver vs Coop - Hindade võrdlus</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+        .search-box input {
+            flex: 1;
+            padding: 12px 20px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        .search-box button {
+            padding: 12px 30px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .search-box button:hover {
+            background: #0056b3;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            display: none;
+        }
+        .results {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+        .store-section {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .store-section h2 {
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        .store-section h2 .count {
+            font-size: 14px;
+            color: #666;
+            font-weight: normal;
+        }
+        .product-item {
+            background: white;
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .product-name {
+            flex: 1;
+            margin-right: 15px;
+            color: #333;
+        }
+        .product-price {
+            font-weight: bold;
+            color: #28a745;
+            font-size: 18px;
+        }
+        .product-price.missing {
+            color: #999;
+            font-weight: normal;
+        }
+        .product-url {
+            font-size: 12px;
+            color: #007bff;
+            text-decoration: none;
+            display: block;
+            margin-top: 4px;
+        }
+        .error {
+            color: #dc3545;
+            padding: 10px;
+            background: #f8d7da;
+            border-radius: 6px;
+        }
+        .no-results {
+            color: #666;
+            padding: 20px;
+            text-align: center;
+        }
+        @media (max-width: 768px) {
+            .results {
+                grid-template-columns: 1fr;
+            }
+            .search-box {
+                flex-direction: column;
+            }
+        }
+    </style>
 </head>
 <body>
-    <h1>Selver vs Coop</h1>
-    <form method="GET" action="/search">
-        <input type="text" name="q" placeholder="Otsi toodet..." value="sai">
-        <button type="submit">Otsi</button>
-    </form>
-    
-    <h3>Alternatiiv - POST päringuga</h3>
-    <button onclick="postSearch()">POST päring</button>
-    
+    <div class="container">
+        <h1>🛒 Selver vs Coop</h1>
+        <p style="color: #666; margin-bottom: 20px;">Võrdle toodete hindu kahes Eesti poes</p>
+        
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Otsi toodet (nt: sai, leib, piim...)" value="sai">
+            <button onclick="search()">🔍 Otsi</button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div>⏳ Otsin...</div>
+        </div>
+        
+        <div class="results" id="results" style="display: none;">
+            <div class="store-section" id="selverSection">
+                <h2>🏪 Selver <span class="count" id="selverCount"></span></h2>
+                <div id="selverResults"></div>
+            </div>
+            <div class="store-section" id="coopSection">
+                <h2>🏪 Coop <span class="count" id="coopCount"></span></h2>
+                <div id="coopResults"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
-        function postSearch() {
-            fetch('/search', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({q: 'sai'})
-            })
-            .then(response => response.json())
-            .then(data => {
-                console.log(data);
-                alert('Vaata konsooli!');
-            });
+        let currentQuery = 'sai';
+        
+        // Otsi enter klahviga
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                search();
+            }
+        });
+
+        function search() {
+            const query = document.getElementById('searchInput').value.trim() || 'sai';
+            currentQuery = query;
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results').style.display = 'none';
+            
+            // Kasuta API endpointi
+            fetch(`/search?q=${encodeURIComponent(query)}`)
+                .then(response => response.json())
+                .then(data => {
+                    displayResults(data);
+                })
+                .catch(error => {
+                    console.error('Viga:', error);
+                    alert('Otsing ebaõnnestus. Proovi uuesti.');
+                })
+                .finally(() => {
+                    document.getElementById('loading').style.display = 'none';
+                });
         }
+
+        function displayResults(data) {
+            document.getElementById('results').style.display = 'grid';
+            
+            // Selver
+            const selverDiv = document.getElementById('selverResults');
+            const selverCount = document.getElementById('selverCount');
+            selverCount.textContent = `(${data.selver_count || 0})`;
+            
+            if (data.selver && data.selver.length > 0) {
+                selverDiv.innerHTML = data.selver.map(p => `
+                    <div class="product-item">
+                        <div class="product-name">
+                            ${escapeHtml(p.name || 'Tundmatu')}
+                            ${p.url ? `<a href="${escapeHtml(p.url)}" target="_blank" class="product-url">🔗 Vaata</a>` : ''}
+                        </div>
+                        <div class="product-price ${p.price_eur ? '' : 'missing'}">
+                            ${p.price_eur ? `${p.price_eur.toFixed(2)} €` : 'Hind puudub'}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                selverDiv.innerHTML = '<div class="no-results">Tooteid ei leitud</div>';
+            }
+            
+            // Coop
+            const coopDiv = document.getElementById('coopResults');
+            const coopCount = document.getElementById('coopCount');
+            coopCount.textContent = `(${data.coop_count || 0})`;
+            
+            if (data.coop && data.coop.length > 0) {
+                coopDiv.innerHTML = data.coop.map(p => `
+                    <div class="product-item">
+                        <div class="product-name">
+                            ${escapeHtml(p.name || 'Tundmatu')}
+                            ${p.url ? `<a href="${escapeHtml(p.url)}" target="_blank" class="product-url">🔗 Vaata</a>` : ''}
+                        </div>
+                        <div class="product-price ${p.price_eur ? '' : 'missing'}">
+                            ${p.price_eur ? `${p.price_eur.toFixed(2)} €` : 'Hind puudub'}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                coopDiv.innerHTML = '<div class="no-results">Tooteid ei leitud</div>';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Automaatne otsing lehe laadimisel
+        window.onload = function() {
+            search();
+        };
     </script>
 </body>
 </html>
