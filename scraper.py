@@ -146,7 +146,17 @@ def _new_requests_session() -> requests.Session:
     if os.getenv("DISABLE_SYSTEM_PROXY", "0") == "1":
         session.trust_env = False
 
-    # Optional Selver-specific outbound proxy, useful when Selver blocks server IP.
+    # --- Option 1: ScraperAPI (free tier: 1000 req/month at scraperapi.com) ---
+    # Set env: SCRAPERAPI_KEY=your_key_here
+    scraperapi_key = os.getenv("SCRAPERAPI_KEY", "").strip()
+    if scraperapi_key:
+        proxy = f"http://scraperapi:{scraperapi_key}@proxy-server.scraperapi.com:8001"
+        session.proxies.update({"http": proxy, "https": proxy})
+        session.verify = False  # ScraperAPI uses self-signed cert
+        return session
+
+    # --- Option 2: Custom proxy URL (residential proxy, e.g. BrightData) ---
+    # Set env: SELVER_PROXY_URL=http://user:pass@proxy-host:port
     selver_proxy = os.getenv("SELVER_PROXY_URL", "").strip()
     if selver_proxy:
         session.proxies.update({"http": selver_proxy, "https": selver_proxy})
