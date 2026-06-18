@@ -4,13 +4,11 @@ from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 
 # -------------------------
-# SELVER (SAFE VERSION)
+# SELVER SCRAPER
 # -------------------------
 def search_selver(query):
     url = f"https://www.selver.ee/search?q={query}"
@@ -18,24 +16,30 @@ def search_selver(query):
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
 
-        # 🔥 kui Selver blokib või JS page → fallback
-        if r.status_code != 200 or len(r.text) < 1000:
-            return [{"error": "Selver blocked or JS-rendered page"}]
+        if r.status_code != 200:
+            return [{"error": "Selver blocked or unavailable"}]
 
         soup = BeautifulSoup(r.text, "html.parser")
 
         products = []
 
-        # 🔥 tolerant selector (Selver muudab tihti HTML-i)
-        for a in soup.select("a[href*='toode']"):
+        # tolerantne selector (Selver muutub tihti)
+        for a in soup.select("a[href]"):
             name = a.get_text(" ", strip=True)
 
             if not name or len(name) < 3:
                 continue
 
+            if "selver" in name.lower():
+                continue
+
+            href = a.get("href", "")
+            if not href:
+                continue
+
             products.append({
                 "name": name,
-                "url": "https://www.selver.ee" + a.get("href", "")
+                "url": "https://www.selver.ee" + href
             })
 
             if len(products) >= 20:
@@ -48,7 +52,7 @@ def search_selver(query):
 
 
 # -------------------------
-# COOP (OK API)
+# COOP API (stabiilne)
 # -------------------------
 def search_coop(query):
     url = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
@@ -57,16 +61,14 @@ def search_coop(query):
         r = requests.get(url, params={"search": query, "per_page": 20}, timeout=15)
         data = r.json()
 
-        products = []
-
-        for item in data:
-            products.append({
+        return [
+            {
                 "name": item.get("name"),
                 "price": item.get("prices", {}).get("price"),
                 "url": item.get("permalink")
-            })
-
-        return products
+            }
+            for item in data
+        ]
 
     except Exception as e:
         return [{"error": str(e)}]
@@ -80,6 +82,9 @@ def home():
     return render_template("index.html")
 
 
+# -------------------------
+# API (IMPORTANT: GET ONLY)
+# -------------------------
 @app.route("/search", methods=["GET"])
 def search():
     q = request.args.get("q", "sai")
@@ -90,8 +95,9 @@ def search():
         "coop": search_coop(q)
     })
 
+
 # -------------------------
-# DEBUG (Render test)
+# HEALTH CHECK (Render jaoks)
 # -------------------------
 @app.route("/health")
 def health():
