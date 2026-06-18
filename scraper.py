@@ -22,7 +22,14 @@ USER_AGENT = (
 PRICE_RE = re.compile(r"(\d+[,.]\d{2})")
 
 EXCLUDE_WORDS = ["sushi", "supp", "magus"]
-INCLUDE_PATTERNS = [r"\bsai\b", r"\bsaiake\b", r"\bsaiakes", r"\bpikksai", r"\briivsai"]
+INCLUDE_PATTERNS = [
+    r"sai",
+    r"kukkel",
+    r"leib",
+    r"ciabatta",
+    r"brioche",
+    r"baguette",
+]
 
 
 # ----------------------------
@@ -94,13 +101,40 @@ def fetch(url, params=None, timeout=10):
 # ----------------------------
 
 def parse_products(html: str) -> List[Product]:
+    """
+    Selver renders each product as a <div class="ProductCard"> containing:
+      - an <a data-testid="productLink"> wrapping the image (no useful text)
+      - <div class="ProductPrices"><div class="ProductPrice">0,50 € ...</div></div>
+      - <div class="ProductCard__name"><h3><a data-testid="productLink">Name</a></h3></div>
+
+    The price lives in a SIBLING div of the name, not inside the <a>'s own
+    parent - that's why the old code (which only looked at a.parent) never
+    found a price and silently dropped every product. We now scope both the
+    name and the price lookup to the whole .ProductCard container.
+
+    Selver's search page also renders products twice (grid view + list view,
+    toggled via CSS), so duplicates are expected and deduped via `seen`.
+    """
     soup = BeautifulSoup(html, "html.parser")
     products = []
     seen = set()
 
-    for a in soup.select("h3 a[href]"):
-        name = normalize(a.get_text())
-        href = a.get("href")
+    for card in soup.select("div.ProductCard"):
+        title_link = card.select_one("h3 a[href]")
+
+        if title_link:
+            name = normalize(title_link.get_text())
+            href = title_link.get("href")
+        else:
+            # Fallback: some cards may not use h3 - grab the first
+            # productLink anchor that actually has visible text.
+            name, href = "", None
+            for a in card.select("a[data-testid='productLink']"):
+                text = normalize(a.get_text())
+                if text:
+                    name = text
+                    href = a.get("href")
+                    break
 
         if not name or not href:
             continue
@@ -108,8 +142,12 @@ def parse_products(html: str) -> List[Product]:
         if not looks_like_sai(name):
             continue
 
-        parent_text = a.parent.get_text(" ", strip=True)
-        price_match = PRICE_RE.search(parent_text)
+        price_container = card.select_one(".ProductPrice")
+        if not price_container:
+            continue
+
+        price_text = price_container.get_text(" ", strip=True)
+        price_match = PRICE_RE.search(price_text)
 
         if not price_match:
             continue
@@ -200,8 +238,53 @@ def scrape_coop(query="sai", category_url: str = "", max_pages=1) -> List[Produc
 
 
 def scrape_with_playwright(query="sai", max_pages=2) -> List[Product]:
-    # Fallback: keeps API compatibility if Playwright isn't installed/available.
-    return scrape(query=query, max_pages=max_pages)
+    """
+    Selver's search results are rendered client-side via JavaScript, so a
+    plain requests.get() returns an empty HTML shell with no products at
+    all. This uses a real headless browser to execute the page's JS and
+    wait for product cards to actually appear before parsing.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        # Playwright isn't installed in this environment - fall back, but
+        # note that the plain `scrape()` path will likely return nothing
+        # for Selver since its content is JS-rendered.
+        return scrape(query=query, max_pages=max_pages)
+
+    all_products: Dict[str, Product] = {}
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(user_agent=USER_AGENT)
+
+            for page_num in range(1, max_pages + 1):
+                url = f"{SEARCH_URL}?q={query}&page={page_num}"
+                try:
+                    page.goto(url, timeout=20000, wait_until="networkidle")
+                    # Wait for actual product cards to render before reading HTML
+                    page.wait_for_selector("div.ProductCard", timeout=8000)
+                    page.wait_for_timeout(1000)
+                except Exception:
+                    break
+
+                html = page.content()
+                products = parse_products(html)
+
+                if not products:
+                    break
+
+                before = len(all_products)
+                for prod in products:
+                    all_products[prod.url] = prod
+
+                if len(all_products) == before:
+                    break
+        finally:
+            browser.close()
+
+    return sorted(all_products.values(), key=lambda x: x.price_eur)
 
 
 def scrape_coop_with_playwright(category_url: str = "", max_pages=1) -> List[Product]:
