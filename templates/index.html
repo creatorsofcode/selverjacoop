@@ -154,6 +154,18 @@
       font-size: .95rem;
     }
 
+    .blocked-box {
+      background: #fff8e1;
+      border: 1.5px solid #f9a825;
+      border-radius: 10px;
+      padding: 20px 24px;
+      color: #5d4037;
+      font-size: .95rem;
+    }
+    .blocked-box h3 { font-size: 1.05rem; margin-bottom: 8px; color: #e65100; }
+    .blocked-box ul { padding-left: 18px; margin-top: 8px; line-height: 1.8; }
+    .blocked-box .tip { margin-top: 12px; font-size: .88rem; color: #888; }
+
     .no-results {
       text-align: center;
       padding: 40px 0;
@@ -223,7 +235,19 @@
 
   <!-- Results -->
   {% if error %}
-  <div class="error-box">⚠️ {{ error }}</div>
+    {% if 'blocked' in error.lower() or 'anti-bot' in error.lower() or 'sisselogimise' in error.lower() or '403' in error %}
+    <div class="blocked-box">
+      <h3>🚧 Selver blokeerib selle serveri</h3>
+      <p>Selver kasutab Cloudflare'i kaitsesüsteemi, mis blokeerib automaatselt andmekeskuste IP-d (Render, VPS jne).</p>
+      <ul>
+        <li>Coop otsing töötab normaalselt — proovi vahetada poeks <strong>Coop Haapsalu</strong></li>
+        <li>Selveri otsing töötab ainult koduühendusest käivitades</li>
+      </ul>
+      <div class="tip">Tehniline selgitus: {{ error }}</div>
+    </div>
+    {% else %}
+    <div class="error-box">⚠️ {{ error }}</div>
+    {% endif %}
   {% elif compare_result %}
     <div class="compare-box">
       <div class="compare-title">Võrdlus: {{ compare_result.query }}</div>
