@@ -57,18 +57,7 @@ def default_context():
         "coop_category": list(COOP_CATEGORIES.keys())[0],
     }
 
-@app.route("/selver")
-def selver():
-    import cloudscraper
 
-    scraper = cloudscraper.create_scraper()
-    response = scraper.get("https://www.selver.ee/")
-
-    print(response.status_code)
-    print(response.url)
-    print(response.text[:500])
-
-    return "check logs"
 # ----------------------------
 # MAIN PAGE
 # ----------------------------
@@ -122,9 +111,6 @@ def index():
                     if engine == "requests":
                         products = scrape(query, max_pages)
                     else:
-                        # "auto" and "playwright" both need a real browser -
-                        # Selver's results are JS-rendered, plain requests
-                        # always comes back empty.
                         products = scrape_with_playwright(query, max_pages)
 
                 context["products"] = products
@@ -171,9 +157,6 @@ def api_search():
                 if engine == "requests":
                     products = scrape(query, max_pages)
                 else:
-                    # "auto" and "playwright" both need a real browser -
-                    # Selver's results are JS-rendered, plain requests
-                    # always comes back empty.
                     products = scrape_with_playwright(query, max_pages)
 
         return jsonify({
@@ -217,6 +200,23 @@ def api_compare():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+# ----------------------------
+# 🔥 SELVER DEBUG ENDPOINT (IMPORTANT)
+# ----------------------------
+@app.route("/selver-debug")
+def selver_debug():
+    import cloudscraper
+
+    scraper = cloudscraper.create_scraper()
+    response = scraper.get("https://www.selver.ee/")
+
+    print("STATUS:", response.status_code)
+    print("URL:", response.url)
+    print("HTML:", response.text[:500])
+
+    return "check render logs"
 
 
 # ----------------------------
