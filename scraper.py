@@ -323,7 +323,7 @@ def scrape_with_playwright(query: str = "sai", max_pages: int = 5, limit: int = 
             page_obj = context.new_page()
             for page in range(1, max_pages + 1):
                 url = f"{SEARCH_URL}?q={query}&page={page}&limit={limit}"
-                page_obj.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page_obj.goto(url, wait_until="domcontentloaded", timeout=15000)
 
                 # Cloudflare challenge: give the JS challenge a chance to finish.
                 try:
@@ -337,7 +337,7 @@ def scrape_with_playwright(query: str = "sai", max_pages: int = 5, limit: int = 
                 # One retry after the challenge page in case Cloudflare flips cookies.
                 if "Just a moment" in html or "<title>Just a moment" in html:
                     page_obj.wait_for_timeout(15000)
-                    page_obj.reload(wait_until="domcontentloaded", timeout=30000)
+                    page_obj.reload(wait_until="domcontentloaded", timeout=15000)
                     try:
                         page_obj.wait_for_load_state("networkidle", timeout=30000)
                     except Exception:
@@ -348,9 +348,9 @@ def scrape_with_playwright(query: str = "sai", max_pages: int = 5, limit: int = 
                 # If Selver redirects to login/challenge, retry once from the homepage
                 # to refresh session cookies before parsing products.
                 if _looks_like_selver_block_page(html, page_obj.url):
-                    page_obj.goto(BASE_URL, wait_until="domcontentloaded", timeout=30000)
+                    page_obj.goto(BASE_URL, wait_until="domcontentloaded", timeout=15000)
                     page_obj.wait_for_timeout(3000)
-                    page_obj.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    page_obj.goto(url, wait_until="domcontentloaded", timeout=15000)
                     try:
                         page_obj.wait_for_load_state("networkidle", timeout=20000)
                     except Exception:
@@ -553,7 +553,7 @@ def scrape_coop_with_playwright(category_url: str = COOP_SAI_CATEGORY, max_pages
             page_obj = browser.new_page()
             for page_num in range(1, max_pages + 1):
                 url = category_url if page_num == 1 else f"{category_url}page/{page_num}/"
-                page_obj.goto(url, wait_until="domcontentloaded", timeout=60000)
+                page_obj.goto(url, wait_until="domcontentloaded", timeout=15000)
                 try:
                     page_obj.wait_for_load_state("networkidle", timeout=20000)
                 except Exception:

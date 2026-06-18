@@ -59,7 +59,7 @@ def index():
     context = _default_context()
 
     if request.method == "GET":
-        return render_template("index.html", **context)
+        return "OK WORKS"
 
     store = request.form.get("store", "selver")
     action = request.form.get("action", "search")
