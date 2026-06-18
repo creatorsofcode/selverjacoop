@@ -32,12 +32,11 @@ def get_proxy_list():
         "http://51.15.76.89:3128",
     ]
 
-def search_with_proxy(url, headers=None, timeout=10):
+def search_with_proxy(url, headers=None, timeout=15):
     """Teeb päringu proxy kaudu"""
     proxies = get_proxy_list()
     random.shuffle(proxies)
     
-    # Proovi kõiki proxysid
     for proxy in proxies:
         try:
             proxy_dict = {"http": proxy, "https": proxy}
@@ -51,10 +50,9 @@ def search_with_proxy(url, headers=None, timeout=10):
                 print(f"✅ Proxy töötab: {proxy}")
                 return response
         except Exception as e:
-            print(f"❌ Proxy ei tööta: {proxy} - {e}")
+            print(f"❌ Proxy ei tööta: {proxy}")
             continue
     
-    # Kui ükski proxy ei tööta, proovi ilma proxyta
     print("⚠️ Ükski proxy ei tööta, proovin ilma proxyta...")
     try:
         return requests.get(url, headers=headers or {}, timeout=timeout)
@@ -349,10 +347,89 @@ def search_rimi(query: str) -> list:
         return []
 
 # ----------------------------
-# SELVER - EI TÖÖTA
+# SELVER - PROOVIB AGA TÕENÄOLISELT EI TÖÖTA
 # ----------------------------
 def search_selver(query: str) -> list:
-    return []
+    try:
+        url = f"https://www.selver.ee/search?q={quote_plus(query)}"
+        response = search_with_proxy(url, HEADERS)
+        
+        if not response or response.status_code != 200:
+            return []
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        products = []
+        seen = set()
+        
+        items = soup.select("[data-product-id], .product-item, .product-tile")
+        
+        for item in items[:20]:
+            try:
+                name = None
+                for selector in [".product-name", ".name", ".product-title", "h2", "h3"]:
+                    name_elem = item.select_one(selector)
+                    if name_elem:
+                        name = name_elem.get_text(" ", strip=True)
+                        break
+                
+                if not name:
+                    name = item.get_text(" ", strip=True)
+                
+                if not name or len(name) < 3:
+                    continue
+                
+                name_key = name.lower()[:30]
+                if name_key in seen:
+                    continue
+                seen.add(name_key)
+                
+                price = None
+                for selector in [".price", ".product-price", ".price-value"]:
+                    price_elem = item.select_one(selector)
+                    if price_elem:
+                        price_text = price_elem.get_text(" ", strip=True)
+                        match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
+                        if match:
+                            try:
+                                price = float(match.group(1).replace(",", "."))
+                                break
+                            except:
+                                pass
+                
+                if not price:
+                    full_text = item.get_text(" ", strip=True)
+                    matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
+                    if matches:
+                        try:
+                            price = float(matches[0].replace(",", "."))
+                        except:
+                            pass
+                
+                url = ""
+                link = item.select_one("a[href]")
+                if link:
+                    href = link.get("href", "")
+                    if href:
+                        if href.startswith("http"):
+                            url = href
+                        else:
+                            url = f"https://www.selver.ee{href}"
+                
+                products.append({
+                    'name': name[:200],
+                    'price_eur': price,
+                    'url': url,
+                    'store': 'Selver'
+                })
+                
+            except Exception as e:
+                continue
+        
+        return products
+        
+    except Exception as e:
+        print(f"Selver viga: {e}")
+        return []
 
 # ----------------------------
 # FLASK APP
@@ -396,7 +473,8 @@ def search():
     results['stores'].append({
         'name': 'Coop',
         'count': len(coop),
-        'products': coop
+        'products': coop,
+        'working': True
     })
     results['total_count'] += len(coop)
     
@@ -405,7 +483,8 @@ def search():
     results['stores'].append({
         'name': 'Prisma',
         'count': len(prisma),
-        'products': prisma
+        'products': prisma,
+        'working': len(prisma) > 0
     })
     results['total_count'] += len(prisma)
     
@@ -414,7 +493,8 @@ def search():
     results['stores'].append({
         'name': 'Maxima',
         'count': len(maxima),
-        'products': maxima
+        'products': maxima,
+        'working': len(maxima) > 0
     })
     results['total_count'] += len(maxima)
     
@@ -423,17 +503,20 @@ def search():
     results['stores'].append({
         'name': 'Rimi',
         'count': len(rimi),
-        'products': rimi
+        'products': rimi,
+        'working': len(rimi) > 0
     })
     results['total_count'] += len(rimi)
     
-    # Selver - ei tööta
+    # Selver - proovib
     selver = search_selver(q)
     results['stores'].append({
         'name': 'Selver',
         'count': len(selver),
-        'products': selver
+        'products': selver,
+        'working': len(selver) > 0
     })
+    results['total_count'] += len(selver)
     
     response = jsonify(results)
     response.headers.add('Access-Control-Allow-Origin', '*')
