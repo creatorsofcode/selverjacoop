@@ -4,11 +4,6 @@ from typing import Dict, List
 
 import requests
 from bs4 import BeautifulSoup
-response = requests.get("https://www.selver.ee/")
-
-print(response.status_code)
-print(response.url)
-print(response.text[:500])
 
 # ----------------------------
 # CONFIG
