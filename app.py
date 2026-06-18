@@ -80,10 +80,7 @@ def home():
     return render_template("index.html")
 
 
-# -------------------------
-# API
-# -------------------------
-@app.route("/search")
+@app.route("/search", methods=["GET"])
 def search():
     q = request.args.get("q", "sai")
 
@@ -92,7 +89,6 @@ def search():
         "selver": search_selver(q),
         "coop": search_coop(q)
     })
-
 
 # -------------------------
 # DEBUG (Render test)
