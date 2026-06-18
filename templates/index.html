@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eesti poodide hindade võrdlus</title>
+    <title>Eesti poodide hinnavõrdlus</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -19,8 +19,8 @@
             padding: 30px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        h1 { color: #333; margin-bottom: 10px; }
-        .subtitle { color: #666; margin-bottom: 20px; }
+        h1 { color: #333; margin-bottom: 5px; }
+        .subtitle { color: #666; margin-bottom: 20px; font-size: 14px; }
         .search-box {
             display: flex;
             gap: 10px;
@@ -33,6 +33,10 @@
             border-radius: 8px;
             font-size: 16px;
         }
+        .search-box input:focus {
+            outline: none;
+            border-color: #007bff;
+        }
         .search-box button {
             padding: 12px 30px;
             background: #007bff;
@@ -41,6 +45,7 @@
             border-radius: 8px;
             font-size: 16px;
             cursor: pointer;
+            transition: background 0.3s;
         }
         .search-box button:hover { background: #0056b3; }
         .loading {
@@ -48,6 +53,19 @@
             padding: 40px;
             color: #666;
             display: none;
+        }
+        .loading .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
         .results-grid {
             display: grid;
@@ -66,6 +84,9 @@
             border-bottom: 2px solid #007bff;
             padding-bottom: 10px;
             margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .store-card h2 .count {
             font-size: 14px;
@@ -81,12 +102,17 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            transition: transform 0.2s;
+        }
+        .product-item:hover {
+            transform: translateX(4px);
         }
         .product-name {
             flex: 1;
             margin-right: 10px;
             font-size: 14px;
             color: #333;
+            word-break: break-word;
         }
         .product-price {
             font-weight: bold;
@@ -105,10 +131,21 @@
             text-align: center;
             font-size: 14px;
         }
-        .store-selver { border-top-color: #dc3545; }
+        .store-selver { border-top-color: #dc3545; opacity: 0.7; }
+        .store-selver .no-results { color: #dc3545; }
         .store-coop { border-top-color: #28a745; }
         .store-prisma { border-top-color: #ffc107; }
         .store-maxima { border-top-color: #17a2b8; }
+        .total-count {
+            text-align: center;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 16px;
+            color: #333;
+        }
+        .total-count strong { color: #007bff; }
         @media (max-width: 768px) {
             .results-grid { grid-template-columns: 1fr; }
             .search-box { flex-direction: column; }
@@ -118,18 +155,22 @@
 <body>
     <div class="container">
         <h1>🛒 Eesti poodide hinnavõrdlus</h1>
-        <p class="subtitle">Coop · Prisma · Maxima · Selver</p>
+        <p class="subtitle">Coop · Prisma · Maxima · Selver (ei pruugi töötada)</p>
         
         <div class="search-box">
-            <input type="text" id="searchInput" placeholder="Otsi toodet (nt: sai, leib, piim...)" value="sai">
+            <input type="text" id="searchInput" placeholder="Otsi toodet (nt: sai, leib, piim, kohv...)" value="sai">
             <button onclick="search()">🔍 Otsi</button>
         </div>
         
         <div class="loading" id="loading">
-            <div>⏳ Otsin...</div>
+            <div class="spinner"></div>
+            <div style="margin-top: 15px;">Otsin tooteid...</div>
         </div>
         
-        <div class="results-grid" id="results" style="display: none;"></div>
+        <div id="resultsContainer" style="display: none;">
+            <div class="total-count" id="totalCount"></div>
+            <div class="results-grid" id="results"></div>
+        </div>
     </div>
 
     <script>
@@ -137,7 +178,7 @@
             const query = document.getElementById('searchInput').value.trim() || 'sai';
             
             document.getElementById('loading').style.display = 'block';
-            document.getElementById('results').style.display = 'none';
+            document.getElementById('resultsContainer').style.display = 'none';
             
             fetch(`/search?q=${encodeURIComponent(query)}`)
                 .then(response => response.json())
@@ -155,7 +196,7 @@
 
         function displayResults(data) {
             const container = document.getElementById('results');
-            container.style.display = 'grid';
+            const totalContainer = document.getElementById('totalCount');
             
             const storeColors = {
                 'Coop': 'store-coop',
@@ -164,9 +205,15 @@
                 'Selver': 'store-selver'
             };
             
+            // Kuva koguarv
+            totalContainer.innerHTML = `📊 Leitud <strong>${data.total_count || 0}</strong> toodet`;
+            
             container.innerHTML = data.stores.map(store => `
                 <div class="store-card ${storeColors[store.name] || ''}">
-                    <h2>🏪 ${store.name} <span class="count">(${store.count})</span></h2>
+                    <h2>
+                        <span>🏪 ${store.name}</span>
+                        <span class="count">(${store.count})</span>
+                    </h2>
                     ${store.products && store.products.length > 0 ? 
                         store.products.map(p => `
                             <div class="product-item">
@@ -176,10 +223,14 @@
                                 </div>
                             </div>
                         `).join('') 
-                        : '<div class="no-results">Tooteid ei leitud</div>'
+                        : `<div class="no-results">
+                            ${store.name === 'Selver' ? '⚠️ Selver ei tööta Renderis (Cloudflare blokeerib)' : 'Tooteid ei leitud'}
+                        </div>`
                     }
                 </div>
             `).join('');
+            
+            document.getElementById('resultsContainer').style.display = 'block';
         }
 
         function escapeHtml(text) {
@@ -188,11 +239,12 @@
             return div.innerHTML;
         }
 
-        // Automaatne otsing
+        // Otsing enter klahviga
         document.getElementById('searchInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') search();
         });
         
+        // Automaatne otsing lehe laadimisel
         window.onload = search;
     </script>
 </body>
