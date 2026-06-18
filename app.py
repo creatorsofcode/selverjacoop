@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 import requests
 from bs4 import BeautifulSoup
-
+from flask import render_template
 app = Flask(__name__)
 
 HEADERS = {
