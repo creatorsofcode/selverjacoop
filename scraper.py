@@ -1,14 +1,8 @@
 import requests
 from bs4 import BeautifulSoup
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
+HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-
-# -------------------------
-# SELVER
-# -------------------------
 def search_selver(query):
     url = f"https://www.selver.ee/search?q={query}"
 
@@ -35,9 +29,6 @@ def search_selver(query):
         return [{"error": str(e)}]
 
 
-# -------------------------
-# COOP
-# -------------------------
 def search_coop(query):
     url = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
 
@@ -45,16 +36,14 @@ def search_coop(query):
         r = requests.get(url, params={"search": query, "per_page": 20}, timeout=15)
         data = r.json()
 
-        products = []
-
-        for item in data:
-            products.append({
+        return [
+            {
                 "name": item.get("name"),
                 "price": item.get("prices", {}).get("price"),
                 "url": item.get("permalink")
-            })
-
-        return products
+            }
+            for item in data
+        ]
 
     except Exception as e:
         return [{"error": str(e)}]
