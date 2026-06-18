@@ -3,9 +3,6 @@ from scraper import compare_selver_vs_coop
 
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return render_template("index.html")
 
 
 @app.route("/search")
