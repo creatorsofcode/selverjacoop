@@ -1,226 +1,91 @@
-from flask import Flask, jsonify, render_template, request
-from contextlib import contextmanager
-import signal
-
-from scraper import (
-    COOP_CATEGORIES,
-    SelverBlockedError,
-    compare_selver_vs_coop,
-    scrape,
-    scrape_coop,
-    scrape_coop_with_playwright,
-    scrape_with_playwright,
-)
+from flask import Flask, jsonify, request
+import requests
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0 Safari/537.36"
+    )
+}
 
-# ----------------------------
-# Timeout helper (Render-safe)
-# ----------------------------
-@contextmanager
-def request_timeout(seconds: int):
-    if seconds <= 0:
-        yield
-        return
 
-    if not hasattr(signal, "SIGALRM"):
-        yield
-        return
-
-    def handler(signum, frame):
-        raise TimeoutError("Request timeout")
-
-    old = signal.signal(signal.SIGALRM, handler)
-    signal.alarm(seconds)
+def search_selver(query):
+    url = f"https://www.selver.ee/search?q={query}"
 
     try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        products = []
+
+        for a in soup.select("a[href*='/toode/']")[:20]:
+            name = a.get_text(" ", strip=True)
+
+            if len(name) < 3:
+                continue
+
+            products.append({
+                "name": name,
+                "url": "https://www.selver.ee" + a["href"]
+            })
+
+        return products
+
+    except Exception as e:
+        return [{"error": str(e)}]
 
 
-# ----------------------------
-# Default context
-# ----------------------------
-def default_context():
-    return {
-        "products": None,
-        "error": None,
-        "compare_result": None,
-        "query": "sai",
-        "max_pages": 2,
-        "engine": "auto",
-        "store": "selver",
-        "coop_categories": COOP_CATEGORIES,
-        "coop_category": list(COOP_CATEGORIES.keys())[0],
-    }
-
-
-# ----------------------------
-# MAIN PAGE
-# ----------------------------
-@app.route("/", methods=["GET", "POST"])
-def index():
-    context = default_context()
-
-    if request.method == "GET":
-        return render_template("index.html", **context)
-
-    store = request.form.get("store", "selver")
-    action = request.form.get("action", "search")
-    engine = request.form.get("engine", "auto")
+def search_coop(query):
+    url = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
 
     try:
-        max_pages = min(max(int(request.form.get("max_pages", 2)), 1), 5)
-    except (TypeError, ValueError):
-        max_pages = 2
+        r = requests.get(
+            url,
+            params={"search": query, "per_page": 20},
+            timeout=15
+        )
 
-    query = (request.form.get("query", "sai") or "sai").strip()
+        r.raise_for_status()
 
-    coop_category_name = request.form.get("coop_category", context["coop_category"])
-    coop_url = COOP_CATEGORIES.get(coop_category_name, list(COOP_CATEGORIES.values())[0])
+        products = []
 
-    context.update({
-        "store": store,
-        "engine": engine,
-        "max_pages": max_pages,
-        "query": query,
-        "coop_category": coop_category_name,
+        for item in r.json():
+            products.append({
+                "name": item.get("name"),
+                "price": item.get("prices", {}).get("price"),
+                "url": item.get("permalink")
+            })
+
+        return products
+
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+@app.route("/")
+def home():
+    return jsonify({
+        "status": "online",
+        "service": "Selver + Coop API"
     })
 
-    try:
-        with request_timeout(40):
 
-            if action == "compare":
-                context["store"] = "compare"
-                context["compare_result"] = compare_selver_vs_coop(
-                    query=query,
-                    max_pages=max_pages,
-                    coop_category_url=coop_url,
-                    engine=engine,
-                )
-            else:
-                if store == "coop":
-                    if engine == "playwright":
-                        products = scrape_coop_with_playwright(coop_url, max_pages)
-                    else:
-                        products = scrape_coop(query, coop_url, max_pages)
-                else:
-                    if engine == "requests":
-                        products = scrape(query, max_pages)
-                    else:
-                        products = scrape_with_playwright(query, max_pages)
+@app.route("/search")
+def search():
+    q = request.args.get("q", "sai")
 
-                context["products"] = products
-
-    except SelverBlockedError as e:
-        context["error"] = str(e)
-        context["products"] = []
-
-    except Exception as e:
-        context["error"] = str(e)
-        context["products"] = []
-
-    return render_template("index.html", **context)
+    return jsonify({
+        "query": q,
+        "selver": search_selver(q),
+        "coop": search_coop(q)
+    })
 
 
-# ----------------------------
-# API SEARCH
-# ----------------------------
-@app.route("/api/search")
-def api_search():
-    store = request.args.get("store", "selver")
-    engine = request.args.get("engine", "auto")
-
-    try:
-        max_pages = min(max(int(request.args.get("max_pages", 2)), 1), 5)
-    except (TypeError, ValueError):
-        max_pages = 2
-
-    try:
-        with request_timeout(40):
-
-            if store == "coop":
-                cat_name = request.args.get("coop_category", list(COOP_CATEGORIES.keys())[0])
-                cat_url = COOP_CATEGORIES.get(cat_name, list(COOP_CATEGORIES.values())[0])
-
-                if engine == "playwright":
-                    products = scrape_coop_with_playwright(cat_url, max_pages)
-                else:
-                    products = scrape_coop("sai", cat_url, max_pages)
-
-            else:
-                query = (request.args.get("q", "sai") or "sai").strip()
-
-                if engine == "requests":
-                    products = scrape(query, max_pages)
-                else:
-                    products = scrape_with_playwright(query, max_pages)
-
-        return jsonify({
-            "store": store,
-            "count": len(products),
-            "products": [
-                {"name": p.name, "price_eur": p.price_eur, "url": p.url}
-                for p in products
-            ]
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ----------------------------
-# API COMPARE
-# ----------------------------
-@app.route("/api/compare")
-def api_compare():
-    query = (request.args.get("q", "sai") or "sai").strip()
-    engine = request.args.get("engine", "auto")
-
-    try:
-        max_pages = min(max(int(request.args.get("max_pages", 2)), 1), 5)
-    except (TypeError, ValueError):
-        max_pages = 2
-
-    coop_category_name = request.args.get("coop_category", list(COOP_CATEGORIES.keys())[0])
-    coop_url = COOP_CATEGORIES.get(coop_category_name, list(COOP_CATEGORIES.values())[0])
-
-    try:
-        with request_timeout(40):
-            result = compare_selver_vs_coop(
-                query=query,
-                max_pages=max_pages,
-                coop_category_url=coop_url,
-                engine=engine,
-            )
-        return jsonify(result)
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ----------------------------
-# 🔥 SELVER DEBUG ENDPOINT (IMPORTANT)
-# ----------------------------
-@app.route("/selver-debug")
-def selver_debug():
-    import cloudscraper
-
-    scraper = cloudscraper.create_scraper()
-    response = scraper.get("https://www.selver.ee/")
-
-    print("STATUS:", response.status_code)
-    print("URL:", response.url)
-    print("HTML:", response.text[:500])
-
-    return "check render logs"
-
-
-# ----------------------------
-# ENTRY
-# ----------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=10000)
