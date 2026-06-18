@@ -296,13 +296,27 @@ def scrape_coop_with_playwright(category_url: str = "", max_pages=1) -> List[Pro
 # COMPARE SELVER VS COOP
 # ----------------------------
 
+def _scrape_selver(query="sai", max_pages=2, engine="auto") -> List[Product]:
+    """
+    Selver's search results are rendered client-side via JavaScript, so
+    plain requests-based scraping (scrape()) will essentially always come
+    back empty - there is no real "auto-detect" that can succeed without a
+    browser. So both "auto" and "playwright" use the real headless browser
+    here; pass engine="requests" only if you specifically want to exercise
+    the non-working plain-HTTP path (e.g. for testing/comparison).
+    """
+    if engine == "requests":
+        return scrape(query=query, max_pages=max_pages)
+    return scrape_with_playwright(query=query, max_pages=max_pages)
+
+
 def compare_selver_vs_coop(
     query="sai",
     max_pages=2,
     coop_category_url: str = "",
     engine: str = "auto",
 ):
-    selver = scrape(query, max_pages)
+    selver = _scrape_selver(query, max_pages, engine)
     coop = scrape_coop(query=query, category_url=coop_category_url, max_pages=max_pages)
 
     selver = [p for p in selver if p.price_eur > 0]
