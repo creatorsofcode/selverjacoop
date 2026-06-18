@@ -5,7 +5,9 @@ from bs4 import BeautifulSoup
 app = Flask(__name__)
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-
+@app.route("/ping")
+def ping():
+    return "OK"
 
 # -------------------------
 # SELVER SCRAPER
