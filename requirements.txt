@@ -1,6 +1,7 @@
-playwright==1.42.0
-beautifulsoup4
-requests
 flask
+requests
+beautifulsoup4
 cloudscraper
 gunicorn
+greenlet==3.0.3
+playwright==1.42.0
