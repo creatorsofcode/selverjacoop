@@ -57,7 +57,18 @@ def default_context():
         "coop_category": list(COOP_CATEGORIES.keys())[0],
     }
 
+@app.route("/selver")
+def selver():
+    import cloudscraper
 
+    scraper = cloudscraper.create_scraper()
+    response = scraper.get("https://www.selver.ee/")
+
+    print(response.status_code)
+    print(response.url)
+    print(response.text[:500])
+
+    return "check logs"
 # ----------------------------
 # MAIN PAGE
 # ----------------------------
