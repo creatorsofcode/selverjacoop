@@ -167,34 +167,82 @@ def parse_products(html: str) -> List[Product]:
 # MAIN SCRAPER (SELVER)
 # ----------------------------
 
-def scrape(query="sai", max_pages=2) -> List[Product]:
+def scrape_with_playwright(query="sai", max_pages=2) -> List[Product]:
+    from playwright.sync_api import sync_playwright
+
     all_products: Dict[str, Product] = {}
 
-    for page in range(1, max_pages + 1):
-        html = fetch(
-            SEARCH_URL,
-            params={"q": query, "page": page},
-            timeout=10
-        )
+    SEARCH_URL = f"https://www.selver.ee/otsi?query={query}"
 
-        if not html:
-            break
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(user_agent=USER_AGENT)
 
-        products = parse_products(html)
+            for page_num in range(1, max_pages + 1):
 
-        if not products:
-            break
+                url = f"{SEARCH_URL}&page={page_num}"
 
-        before = len(all_products)
+                page.goto(url, wait_until="domcontentloaded")
 
-        for p in products:
-            all_products[p.url] = p
+                # 🔥 WAIT + SCROLL (kriitiline Selveri jaoks)
+                page.wait_for_timeout(3000)
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(2000)
 
-        if len(all_products) == before:
-            break
+                # 🔥 STABIILNE SELECTOR (mitte ProductCard)
+                page.wait_for_selector("a[data-testid='productLink']", timeout=15000)
 
-    return sorted(all_products.values(), key=lambda x: x.price_eur)
+                items = page.query_selector_all("a[data-testid='productLink']")
 
+                products = []
+                seen = set()
+
+                for item in items:
+                    try:
+                        name = item.inner_text().strip()
+                        href = item.get_attribute("href")
+
+                        if not name or not href:
+                            continue
+
+                        if name.lower() in seen:
+                            continue
+
+                        seen.add(name.lower())
+
+                        if not href.startswith("http"):
+                            href = "https://www.selver.ee" + href
+
+                        products.append(Product(
+                            name=name,
+                            price_eur=0.0,  # Selveri search view ei anna alati hinda
+                            url=href
+                        ))
+
+                    except:
+                        continue
+
+                print(f"[selver] page {page_num}: found {len(products)} products")
+
+                if not products:
+                    break
+
+                before = len(all_products)
+
+                for pdt in products:
+                    all_products[pdt.url] = pdt
+
+                if len(all_products) == before:
+                    break
+
+            browser.close()
+
+    except Exception as e:
+        print(f"[selver] Playwright error: {e}")
+        return []
+
+    return list(all_products.values())
 
 # ----------------------------
 # COOP SCRAPER (API-BASED)
