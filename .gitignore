@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Temporary local probe/output files
+_tmp*.json
+_selver_search.html
+_smoke_selver.py
