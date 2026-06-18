@@ -74,7 +74,7 @@ def index():
 
     try:
         max_pages = min(max(int(request.form.get("max_pages", 2)), 1), 5)
-    except:
+    except (TypeError, ValueError):
         max_pages = 2
 
     query = (request.form.get("query", "sai") or "sai").strip()
@@ -136,7 +136,7 @@ def api_search():
 
     try:
         max_pages = min(max(int(request.args.get("max_pages", 2)), 1), 5)
-    except:
+    except (TypeError, ValueError):
         max_pages = 2
 
     try:
@@ -146,7 +146,10 @@ def api_search():
                 cat_name = request.args.get("coop_category", list(COOP_CATEGORIES.keys())[0])
                 cat_url = COOP_CATEGORIES.get(cat_name, list(COOP_CATEGORIES.values())[0])
 
-                products = scrape_coop_with_playwright(cat_url, max_pages) if engine == "playwright" else scrape_coop("sai", cat_url, max_pages)
+                if engine == "playwright":
+                    products = scrape_coop_with_playwright(cat_url, max_pages)
+                else:
+                    products = scrape_coop("sai", cat_url, max_pages)
 
             else:
                 query = (request.args.get("q", "sai") or "sai").strip()
@@ -179,7 +182,7 @@ def api_compare():
 
     try:
         max_pages = min(max(int(request.args.get("max_pages", 2)), 1), 5)
-    except:
+    except (TypeError, ValueError):
         max_pages = 2
 
     coop_category_name = request.args.get("coop_category", list(COOP_CATEGORIES.keys())[0])
