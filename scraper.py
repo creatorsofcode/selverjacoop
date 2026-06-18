@@ -31,6 +31,20 @@ INCLUDE_PATTERNS = [
 
 
 # ----------------------------
+# COOP CONFIG (FIX FOR IMPORT ERROR)
+# ----------------------------
+
+COOP_API = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
+COOP_BASE = "https://coophaapsalu.ee"
+
+COOP_CATEGORIES = {
+    "Saiad, sepikud": COOP_BASE + "/tootekategooria/pagaritooted/saiad/",
+    "Leivad": COOP_BASE + "/tootekategooria/pagaritooted/leivad/",
+    "Pagaritooted (koik)": COOP_BASE + "/tootekategooria/pagaritooted/",
+}
+
+
+# ----------------------------
 # DATA MODEL
 # ----------------------------
 
@@ -99,7 +113,7 @@ def fetch(session, url, params=None, timeout=10):
 
 
 # ----------------------------
-# PARSER
+# SELVER PARSER
 # ----------------------------
 
 def parse_products(html: str) -> List[Product]:
@@ -108,7 +122,6 @@ def parse_products(html: str) -> List[Product]:
     products = []
     seen = set()
 
-    # Selver search result structure
     for a in soup.select("a[href]"):
         name = normalize(a.get_text())
 
@@ -124,8 +137,6 @@ def parse_products(html: str) -> List[Product]:
         if not price_match:
             continue
 
-        price = eur_to_float(price_match.group(1))
-
         href = a.get("href")
         if not href:
             continue
@@ -136,7 +147,12 @@ def parse_products(html: str) -> List[Product]:
             continue
 
         seen.add(url)
-        products.append(Product(name, price, url))
+
+        products.append(Product(
+            name=name,
+            price_eur=eur_to_float(price_match.group(1)),
+            url=url
+        ))
 
     return products
 
@@ -169,7 +185,6 @@ def scrape_selver(query="sai", max_pages=2) -> List[Product]:
         for p in products:
             results[p.url] = p
 
-        # stop if no new items
         if len(results) == before:
             break
 
@@ -179,9 +194,6 @@ def scrape_selver(query="sai", max_pages=2) -> List[Product]:
 # ----------------------------
 # COOP SCRAPER (API)
 # ----------------------------
-
-COOP_API = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
-
 
 def scrape_coop(query="sai"):
     session = new_session()
@@ -212,21 +224,21 @@ def scrape_coop(query="sai"):
 
 
 # ----------------------------
-# COMPARE
+# COMPARE FUNCTION
 # ----------------------------
 
 def compare(query="sai"):
-    selver = scrape_selver(query)
-    coop = scrape_coop(query)
-
-    selver = [p for p in selver if p.price_eur > 0]
-    coop = [p for p in coop if p.price_eur > 0]
+    selver = [p for p in scrape_selver(query) if p.price_eur > 0]
+    coop = [p for p in scrape_coop(query) if p.price_eur > 0]
 
     selver_best = min(selver, key=lambda x: x.price_eur) if selver else None
     coop_best = min(coop, key=lambda x: x.price_eur) if coop else None
 
     if not selver_best and not coop_best:
-        return {"error": "no data"}
+        return {
+            "query": query,
+            "error": "no data"
+        }
 
     if selver_best and coop_best:
         winner = "selver" if selver_best.price_eur < coop_best.price_eur else "coop"
