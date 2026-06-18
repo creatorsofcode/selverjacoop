@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
-from requests.exceptions import ProxyError
+from requests.exceptions import ProxyError, ReadTimeout
 
 try:
     cloudscraper = importlib.import_module("cloudscraper")
@@ -106,7 +106,37 @@ def parse_products_from_soup(soup: BeautifulSoup, query: Optional[str] = None) -
 
 def _fetch_html_requests(url: str, session: requests.Session, params: Optional[Dict[str, str]] = None) -> str:
     try:
-        response = session.get(url, params=params, timeout=10)
+        # Proxy routes (ScraperAPI/residential) are slower; allow configurable timeout.
+        default_timeout = 25 if os.getenv("SCRAPERAPI_KEY", "").strip() else 10
+        request_timeout = int(os.getenv("SELVER_REQUEST_TIMEOUT", str(default_timeout)))
+        scraperapi_key = os.getenv("SCRAPERAPI_KEY", "").strip()
+        scraperapi_mode = os.getenv("SCRAPERAPI_MODE", "api").strip().lower()
+
+        if scraperapi_key and scraperapi_mode == "api":
+            # Build the full destination URL first so ScraperAPI receives the exact Selver URL.
+            target_url = requests.Request("GET", url, params=params).prepare().url
+            scraperapi_endpoint = os.getenv("SCRAPERAPI_ENDPOINT", "https://api.scraperapi.com").strip()
+            scraperapi_params: Dict[str, str] = {
+                "api_key": scraperapi_key,
+                "url": target_url,
+            }
+            render_enabled = os.getenv("SCRAPERAPI_RENDER", "1") == "1"
+            if render_enabled:
+                scraperapi_params["render"] = "true"
+            country_code = os.getenv("SCRAPERAPI_COUNTRY", "ee").strip()
+            if country_code:
+                scraperapi_params["country_code"] = country_code
+            try:
+                response = session.get(scraperapi_endpoint, params=scraperapi_params, timeout=request_timeout)
+            except ReadTimeout:
+                if not render_enabled:
+                    raise
+                # Rendered mode can be slower; retry once without JS rendering.
+                scraperapi_params.pop("render", None)
+                response = session.get(scraperapi_endpoint, params=scraperapi_params, timeout=request_timeout)
+        else:
+            response = session.get(url, params=params, timeout=request_timeout)
+
         if response.status_code == 403:
             raise SelverBlockedError("Selver blocked this server/IP (HTTP 403).")
         response.raise_for_status()
@@ -146,10 +176,11 @@ def _new_requests_session() -> requests.Session:
     if os.getenv("DISABLE_SYSTEM_PROXY", "0") == "1":
         session.trust_env = False
 
-    # --- Option 1: ScraperAPI (free tier: 1000 req/month at scraperapi.com) ---
-    # Set env: SCRAPERAPI_KEY=your_key_here
+    # --- Option 1: ScraperAPI ---
+    # Default mode uses ScraperAPI API endpoint in _fetch_html_requests.
+    # Optional proxy mode can be enabled with SCRAPERAPI_MODE=proxy.
     scraperapi_key = os.getenv("SCRAPERAPI_KEY", "").strip()
-    if scraperapi_key:
+    if scraperapi_key and os.getenv("SCRAPERAPI_MODE", "api").strip().lower() == "proxy":
         proxy = f"http://scraperapi:{scraperapi_key}@proxy-server.scraperapi.com:8001"
         session.proxies.update({"http": proxy, "https": proxy})
         session.verify = False  # ScraperAPI uses self-signed cert
