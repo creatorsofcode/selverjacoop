@@ -108,10 +108,13 @@ def index():
                     else:
                         products = scrape_coop(query, coop_url, max_pages)
                 else:
-                    if engine == "playwright":
-                        products = scrape_with_playwright(query, max_pages)
-                    else:
+                    if engine == "requests":
                         products = scrape(query, max_pages)
+                    else:
+                        # "auto" and "playwright" both need a real browser -
+                        # Selver's results are JS-rendered, plain requests
+                        # always comes back empty.
+                        products = scrape_with_playwright(query, max_pages)
 
                 context["products"] = products
 
@@ -154,10 +157,13 @@ def api_search():
             else:
                 query = (request.args.get("q", "sai") or "sai").strip()
 
-                if engine == "playwright":
-                    products = scrape_with_playwright(query, max_pages)
-                else:
+                if engine == "requests":
                     products = scrape(query, max_pages)
+                else:
+                    # "auto" and "playwright" both need a real browser -
+                    # Selver's results are JS-rendered, plain requests
+                    # always comes back empty.
+                    products = scrape_with_playwright(query, max_pages)
 
         return jsonify({
             "store": store,
