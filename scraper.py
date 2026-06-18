@@ -1,8 +1,9 @@
 import re
+from dataclasses import dataclass
+from typing import Dict, List
+
 import requests
 from bs4 import BeautifulSoup
-from dataclasses import dataclass
-from typing import List, Dict
 
 
 # ----------------------------
@@ -10,7 +11,7 @@ from typing import List, Dict
 # ----------------------------
 
 BASE_URL = "https://www.selver.ee"
-SEARCH_URL = "https://www.selver.ee/search"
+SEARCH_URL = BASE_URL + "/search"
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -21,27 +22,7 @@ USER_AGENT = (
 PRICE_RE = re.compile(r"(\d+[,.]\d{2})")
 
 EXCLUDE_WORDS = ["sushi", "supp", "magus"]
-INCLUDE_PATTERNS = [
-    r"\bsai\b",
-    r"\bsaiake\b",
-    r"\bsaiakes",
-    r"\bpikksai",
-    r"\briivsai"
-]
-
-
-# ----------------------------
-# COOP CONFIG (FIX FOR IMPORT ERROR)
-# ----------------------------
-
-COOP_API = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
-COOP_BASE = "https://coophaapsalu.ee"
-
-COOP_CATEGORIES = {
-    "Saiad, sepikud": COOP_BASE + "/tootekategooria/pagaritooted/saiad/",
-    "Leivad": COOP_BASE + "/tootekategooria/pagaritooted/leivad/",
-    "Pagaritooted (koik)": COOP_BASE + "/tootekategooria/pagaritooted/",
-}
+INCLUDE_PATTERNS = [r"\bsai\b", r"\bsaiake\b", r"\bsaiakes", r"\bpikksai", r"\briivsai"]
 
 
 # ----------------------------
@@ -55,7 +36,7 @@ class Product:
     url: str
 
 
-class SelverBlockedError(Exception):
+class SelverBlockedError(RuntimeError):
     pass
 
 
@@ -63,8 +44,8 @@ class SelverBlockedError(Exception):
 # HELPERS
 # ----------------------------
 
-def eur_to_float(text: str) -> float:
-    return float(text.replace(",", ".").strip())
+def eur_text_to_float(value: str) -> float:
+    return float(value.replace(",", ".").strip())
 
 
 def normalize(text: str) -> str:
@@ -73,41 +54,37 @@ def normalize(text: str) -> str:
 
 def looks_like_sai(name: str) -> bool:
     n = name.lower()
-
-    if any(x in n for x in EXCLUDE_WORDS):
+    if any(w in n for w in EXCLUDE_WORDS):
         return False
-
     return any(re.search(p, n) for p in INCLUDE_PATTERNS)
 
 
 # ----------------------------
-# SESSION
+# HTTP SESSION
 # ----------------------------
 
 def new_session():
-    s = requests.Session()
-    s.headers.update({
+    session = requests.Session()
+    session.headers.update({
         "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml",
+        "Accept": "text/html",
         "Accept-Language": "et-EE,et;q=0.9,en;q=0.8",
-        "Referer": "https://www.selver.ee/",
     })
-    return s
+    return session
 
 
 # ----------------------------
-# FETCH
+# SAFE FETCH
 # ----------------------------
 
-def fetch(session, url, params=None, timeout=10):
+def fetch(url, params=None, timeout=10):
     try:
-        r = session.get(url, params=params, timeout=timeout)
-
+        r = requests.get(url, params=params, timeout=timeout)
         if r.status_code in (403, 429):
             raise SelverBlockedError("Blocked")
-
         return r.text
-
+    except SelverBlockedError:
+        raise
     except Exception:
         return ""
 
@@ -118,14 +95,14 @@ def fetch(session, url, params=None, timeout=10):
 
 def parse_products(html: str) -> List[Product]:
     soup = BeautifulSoup(html, "html.parser")
-
     products = []
     seen = set()
 
-    for a in soup.select("a[href]"):
+    for a in soup.select("h3 a[href]"):
         name = normalize(a.get_text())
+        href = a.get("href")
 
-        if not name:
+        if not name or not href:
             continue
 
         if not looks_like_sai(name):
@@ -137,39 +114,30 @@ def parse_products(html: str) -> List[Product]:
         if not price_match:
             continue
 
-        href = a.get("href")
-        if not href:
-            continue
-
+        price = eur_text_to_float(price_match.group(1))
         url = href if href.startswith("http") else BASE_URL + href
 
         if url in seen:
             continue
 
         seen.add(url)
-
-        products.append(Product(
-            name=name,
-            price_eur=eur_to_float(price_match.group(1)),
-            url=url
-        ))
+        products.append(Product(name=name, price_eur=price, url=url))
 
     return products
 
 
 # ----------------------------
-# SELVER SCRAPER
+# MAIN SCRAPER (SELVER)
 # ----------------------------
 
-def scrape_selver(query="sai", max_pages=2) -> List[Product]:
-    session = new_session()
-    results: Dict[str, Product] = {}
+def scrape(query="sai", max_pages=2) -> List[Product]:
+    all_products: Dict[str, Product] = {}
 
     for page in range(1, max_pages + 1):
         html = fetch(
-            session,
             SEARCH_URL,
-            params={"q": query, "page": page}
+            params={"q": query, "page": page},
+            timeout=10
         )
 
         if not html:
@@ -180,76 +148,121 @@ def scrape_selver(query="sai", max_pages=2) -> List[Product]:
         if not products:
             break
 
-        before = len(results)
+        before = len(all_products)
 
         for p in products:
-            results[p.url] = p
+            all_products[p.url] = p
 
-        if len(results) == before:
+        if len(all_products) == before:
             break
 
-    return sorted(results.values(), key=lambda x: x.price_eur)
+    return sorted(all_products.values(), key=lambda x: x.price_eur)
 
 
 # ----------------------------
-# COOP SCRAPER (API)
+# COOP SCRAPER (API-BASED)
 # ----------------------------
 
-def scrape_coop(query="sai"):
+COOP_API = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
+COOP_BASE = "https://coophaapsalu.ee"
+COOP_CATEGORIES = {
+    "Saiad, sepikud": COOP_BASE + "/tootekategooria/pagaritooted/saiad/",
+    "Leivad": COOP_BASE + "/tootekategooria/pagaritooted/leivad/",
+    "Pagaritooted (koik)": COOP_BASE + "/tootekategooria/pagaritooted/",
+}
+
+
+def scrape_coop(query="sai", category_url: str = "", max_pages=1) -> List[Product]:
     session = new_session()
+    results = []
 
     try:
-        r = session.get(COOP_API, params={"search": query, "per_page": 20})
+        r = session.get(
+            COOP_API,
+            params={"search": query, "per_page": 20},
+            timeout=10
+        )
         data = r.json()
-
-        out = []
 
         for item in data:
             name = item.get("name")
-            price = item.get("prices", {}).get("price", 0)
+            price_raw = item.get("prices", {}).get("price", 0)
+            price = float(price_raw) / 100
+            url = item.get("permalink")
 
-            if not name:
-                continue
-
-            out.append(Product(
-                name=name,
-                price_eur=float(price) / 100 if price else 0,
-                url=item.get("permalink", "")
-            ))
-
-        return out
+            if name and url:
+                results.append(Product(name=name, price_eur=price, url=url))
 
     except Exception:
         return []
 
+    return results
+
+
+def scrape_with_playwright(query="sai", max_pages=2) -> List[Product]:
+    # Fallback: keeps API compatibility if Playwright isn't installed/available.
+    return scrape(query=query, max_pages=max_pages)
+
+
+def scrape_coop_with_playwright(category_url: str = "", max_pages=1) -> List[Product]:
+    # Fallback: keeps API compatibility if Playwright isn't installed/available.
+    return scrape_coop(query="sai", category_url=category_url, max_pages=max_pages)
+
 
 # ----------------------------
-# COMPARE FUNCTION
+# COMPARE SELVER VS COOP
 # ----------------------------
 
-def compare(query="sai"):
-    selver = [p for p in scrape_selver(query) if p.price_eur > 0]
-    coop = [p for p in scrape_coop(query) if p.price_eur > 0]
+def compare_selver_vs_coop(
+    query="sai",
+    max_pages=2,
+    coop_category_url: str = "",
+    engine: str = "auto",
+):
+    selver = scrape(query, max_pages)
+    coop = scrape_coop(query=query, category_url=coop_category_url, max_pages=max_pages)
+
+    selver = [p for p in selver if p.price_eur > 0]
+    coop = [p for p in coop if p.price_eur > 0]
+
+    if not selver and not coop:
+        return {
+            "query": query,
+            "selver_count": 0,
+            "coop_count": 0,
+            "winner_store": "no-data",
+            "price_diff_eur": None,
+            "price_diff_pct": None,
+            "selver_cheapest": None,
+            "coop_cheapest": None,
+            "summary": "Molemast poest ei leitud sobivaid tooteid.",
+        }
 
     selver_best = min(selver, key=lambda x: x.price_eur) if selver else None
     coop_best = min(coop, key=lambda x: x.price_eur) if coop else None
 
-    if not selver_best and not coop_best:
-        return {
-            "query": query,
-            "error": "no data"
-        }
-
     if selver_best and coop_best:
         winner = "selver" if selver_best.price_eur < coop_best.price_eur else "coop"
+        diff_eur = round(abs(selver_best.price_eur - coop_best.price_eur), 2)
+        max_price = max(selver_best.price_eur, coop_best.price_eur)
+        diff_pct = round((diff_eur / max_price) * 100, 2) if max_price > 0 else None
+    elif selver_best:
+        winner = "selver"
+        diff_eur = None
+        diff_pct = None
     else:
-        winner = "selver" if selver_best else "coop"
+        winner = "coop"
+        diff_eur = None
+        diff_pct = None
 
     return {
         "query": query,
         "selver_count": len(selver),
         "coop_count": len(coop),
-        "selver_best": selver_best,
-        "coop_best": coop_best,
-        "winner": winner
+        "winner_store": winner,
+        "price_diff_eur": diff_eur,
+        "price_diff_pct": diff_pct,
+        "selver_cheapest": selver_best,
+        "coop_cheapest": coop_best,
+        "summary": "Vordlus tehtud.",
     }
