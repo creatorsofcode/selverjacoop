@@ -8,6 +8,9 @@ from urllib.parse import quote_plus, urljoin
 import requests
 from bs4 import BeautifulSoup
 
+if os.getenv("RENDER") and not os.getenv("PLAYWRIGHT_BROWSERS_PATH"):
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/project/.cache/ms-playwright"
+
 BASE_URL = "https://www.selver.ee"
 SELVER_SEARCH_URL = f"{BASE_URL}/search"
 COOP_API = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"

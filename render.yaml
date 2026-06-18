@@ -3,8 +3,8 @@ services:
     name: selverjacoop
     env: python
     plan: free
-    buildCommand: mkdir -p /opt/render/project/.cache/ms-playwright && pip install -r requirements.txt && python -m playwright install chromium
-    startCommand: python -m playwright install chromium && python -m gunicorn wsgi:app --bind 0.0.0.0:${PORT:-10000} --workers 2 --timeout 120 --access-logfile - --error-logfile -
+    buildCommand: mkdir -p /opt/render/project/.cache/ms-playwright && pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/.cache/ms-playwright python -m playwright install chromium
+    startCommand: PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/.cache/ms-playwright python -m playwright install chromium && PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/.cache/ms-playwright python -m gunicorn wsgi:app --bind 0.0.0.0:${PORT:-10000} --workers 2 --timeout 120 --access-logfile - --error-logfile -
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
