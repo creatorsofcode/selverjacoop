@@ -76,22 +76,43 @@
             background: #f8f9fa;
             border-radius: 8px;
             padding: 15px;
-            border-top: 4px solid #007bff;
+            border-top: 4px solid #28a745;
+        }
+        .store-card.not-working {
+            border-top-color: #dc3545;
+            opacity: 0.6;
         }
         .store-card h2 {
             font-size: 18px;
             color: #333;
-            border-bottom: 2px solid #007bff;
+            border-bottom: 2px solid #28a745;
             padding-bottom: 10px;
             margin-bottom: 15px;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
+        .store-card.not-working h2 {
+            border-bottom-color: #dc3545;
+        }
         .store-card h2 .count {
             font-size: 14px;
             color: #666;
             font-weight: normal;
+        }
+        .status-badge {
+            font-size: 12px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-weight: normal;
+        }
+        .status-working {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-broken {
+            background: #f8d7da;
+            color: #721c24;
         }
         .product-item {
             background: white;
@@ -131,11 +152,6 @@
             text-align: center;
             font-size: 14px;
         }
-        .store-coop { border-top-color: #28a745; }
-        .store-rimi { border-top-color: #ff6b6b; }
-        .store-prisma { border-top-color: #ffc107; }
-        .store-maxima { border-top-color: #17a2b8; }
-        .store-selver { border-top-color: #dc3545; opacity: 0.7; }
         .total-count {
             text-align: center;
             padding: 15px;
@@ -198,37 +214,35 @@
             const container = document.getElementById('results');
             const totalContainer = document.getElementById('totalCount');
             
-            const storeColors = {
-                'Coop': 'store-coop',
-                'Rimi': 'store-rimi',
-                'Prisma': 'store-prisma',
-                'Maxima': 'store-maxima',
-                'Selver': 'store-selver'
-            };
-            
             totalContainer.innerHTML = `📊 Leitud <strong>${data.total_count || 0}</strong> toodet`;
             
-            container.innerHTML = data.stores.map(store => `
-                <div class="store-card ${storeColors[store.name] || ''}">
-                    <h2>
-                        <span>🏪 ${store.name}</span>
-                        <span class="count">(${store.count})</span>
-                    </h2>
-                    ${store.products && store.products.length > 0 ? 
-                        store.products.map(p => `
-                            <div class="product-item">
-                                <div class="product-name">${escapeHtml(p.name || 'Tundmatu')}</div>
-                                <div class="product-price ${p.price_eur ? '' : 'missing'}">
-                                    ${p.price_eur ? `${p.price_eur.toFixed(2)} €` : 'Hind puudub'}
+            container.innerHTML = data.stores.map(store => {
+                const isWorking = store.working !== false;
+                const workingClass = isWorking ? '' : 'not-working';
+                const statusBadge = isWorking ? 
+                    '<span class="status-badge status-working">✅ Töötab</span>' : 
+                    '<span class="status-badge status-broken">❌ Ei tööta</span>';
+                
+                return `
+                    <div class="store-card ${workingClass}">
+                        <h2>
+                            <span>🏪 ${store.name} ${statusBadge}</span>
+                            <span class="count">(${store.count})</span>
+                        </h2>
+                        ${store.products && store.products.length > 0 ? 
+                            store.products.map(p => `
+                                <div class="product-item">
+                                    <div class="product-name">${escapeHtml(p.name || 'Tundmatu')}</div>
+                                    <div class="product-price ${p.price_eur ? '' : 'missing'}">
+                                        ${p.price_eur ? `${p.price_eur.toFixed(2)} €` : 'Hind puudub'}
+                                    </div>
                                 </div>
-                            </div>
-                        `).join('') 
-                        : `<div class="no-results">
-                            ${store.name === 'Selver' ? '⚠️ Selver ei tööta (Cloudflare)' : 'Tooteid ei leitud'}
-                        </div>`
-                    }
-                </div>
-            `).join('');
+                            `).join('') 
+                            : '<div class="no-results">Tooteid ei leitud</div>'
+                        }
+                    </div>
+                `;
+            }).join('');
             
             document.getElementById('resultsContainer').style.display = 'block';
         }
