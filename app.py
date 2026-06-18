@@ -8,10 +8,17 @@ from urllib.parse import quote_plus
 
 app = Flask(__name__)
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "et-EE,et;q=0.9,en;q=0.8",
+}
+
 # ----------------------------
 # PROXY FUNKTSIOONID
 # ----------------------------
 def get_proxy_list():
+    """Tagastab töötavate proxyde nimekirja"""
     return [
         "http://94.131.38.176:8080",
         "http://195.123.225.121:8080",
@@ -25,25 +32,37 @@ def get_proxy_list():
         "http://51.15.76.89:3128",
     ]
 
-def search_with_proxy(url, headers=None, timeout=15):
+def search_with_proxy(url, headers=None, timeout=10):
+    """Teeb päringu proxy kaudu"""
     proxies = get_proxy_list()
     random.shuffle(proxies)
     
+    # Proovi kõiki proxysid
     for proxy in proxies:
         try:
             proxy_dict = {"http": proxy, "https": proxy}
-            response = requests.get(url, headers=headers or {}, proxies=proxy_dict, timeout=timeout)
+            response = requests.get(
+                url,
+                headers=headers or {},
+                proxies=proxy_dict,
+                timeout=timeout
+            )
             if response.status_code == 200:
                 print(f"✅ Proxy töötab: {proxy}")
                 return response
-        except:
+        except Exception as e:
+            print(f"❌ Proxy ei tööta: {proxy} - {e}")
             continue
     
+    # Kui ükski proxy ei tööta, proovi ilma proxyta
     print("⚠️ Ükski proxy ei tööta, proovin ilma proxyta...")
-    return requests.get(url, headers=headers or {}, timeout=timeout)
+    try:
+        return requests.get(url, headers=headers or {}, timeout=timeout)
+    except:
+        return None
 
 # ----------------------------
-# COOP (TÖÖTAB)
+# COOP (TÖÖTAB ILMA PROXYTA)
 # ----------------------------
 def search_coop(query: str) -> list:
     try:
@@ -96,15 +115,9 @@ def search_coop(query: str) -> list:
 def search_prisma(query: str) -> list:
     try:
         url = f"https://www.prisma.ee/et/otsing?q={quote_plus(query)}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9",
-            "Accept-Language": "et-EE,et;q=0.9,en;q=0.8",
-        }
+        response = search_with_proxy(url, HEADERS)
         
-        response = search_with_proxy(url, headers)
-        
-        if response.status_code != 200:
+        if not response or response.status_code != 200:
             return []
         
         soup = BeautifulSoup(response.text, "html.parser")
@@ -189,15 +202,9 @@ def search_prisma(query: str) -> list:
 def search_maxima(query: str) -> list:
     try:
         url = f"https://www.maxima.ee/et/search?q={quote_plus(query)}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9",
-            "Accept-Language": "et-EE,et;q=0.9,en;q=0.8",
-        }
+        response = search_with_proxy(url, HEADERS)
         
-        response = search_with_proxy(url, headers)
-        
-        if response.status_code != 200:
+        if not response or response.status_code != 200:
             return []
         
         soup = BeautifulSoup(response.text, "html.parser")
@@ -283,13 +290,12 @@ def search_rimi(query: str) -> list:
     try:
         url = f"https://www.rimi.ee/api/products?search={quote_plus(query)}&limit=20"
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            **HEADERS,
             "Accept": "application/json",
         }
-        
         response = search_with_proxy(url, headers)
         
-        if response.status_code != 200:
+        if not response or response.status_code != 200:
             return []
         
         data = response.json()
@@ -385,31 +391,49 @@ def search():
         'total_count': 0
     }
     
-    # Kõik poed
-    stores = [
-        ('Coop', search_coop),
-        ('Prisma', search_prisma),
-        ('Maxima', search_maxima),
-        ('Rimi', search_rimi),
-        ('Selver', search_selver),
-    ]
+    # Coop - töötab alati
+    coop = search_coop(q)
+    results['stores'].append({
+        'name': 'Coop',
+        'count': len(coop),
+        'products': coop
+    })
+    results['total_count'] += len(coop)
     
-    for name, search_func in stores:
-        try:
-            products = search_func(q)
-            results['stores'].append({
-                'name': name,
-                'count': len(products),
-                'products': products
-            })
-            results['total_count'] += len(products)
-        except Exception as e:
-            results['stores'].append({
-                'name': name,
-                'count': 0,
-                'products': [],
-                'error': str(e)
-            })
+    # Prisma - proxyga
+    prisma = search_prisma(q)
+    results['stores'].append({
+        'name': 'Prisma',
+        'count': len(prisma),
+        'products': prisma
+    })
+    results['total_count'] += len(prisma)
+    
+    # Maxima - proxyga
+    maxima = search_maxima(q)
+    results['stores'].append({
+        'name': 'Maxima',
+        'count': len(maxima),
+        'products': maxima
+    })
+    results['total_count'] += len(maxima)
+    
+    # Rimi - proxyga
+    rimi = search_rimi(q)
+    results['stores'].append({
+        'name': 'Rimi',
+        'count': len(rimi),
+        'products': rimi
+    })
+    results['total_count'] += len(rimi)
+    
+    # Selver - ei tööta
+    selver = search_selver(q)
+    results['stores'].append({
+        'name': 'Selver',
+        'count': len(selver),
+        'products': selver
+    })
     
     response = jsonify(results)
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -425,6 +449,10 @@ def method_not_allowed(e):
         'error': 'Method not allowed',
         'allowed_methods': ['GET', 'POST', 'OPTIONS']
     }), 405
+
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
