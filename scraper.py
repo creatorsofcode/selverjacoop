@@ -1,50 +1,60 @@
-from flask import Flask, render_template, request
-from scraper import compare_selver_vs_coop
+import requests
+from bs4 import BeautifulSoup
 
-app = Flask(__name__)
-
-
-
-@app.route("/search")
-def search():
-    query = request.args.get("q", "sai")
-
-    data = compare_selver_vs_coop(query=query)
-
-    return jsonify(data)
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
 
 
-@app.route("/selver")
-def selver():
-    query = request.args.get("q", "sai")
+# -------------------------
+# SELVER
+# -------------------------
+def search_selver(query):
+    url = f"https://www.selver.ee/search?q={query}"
 
-    data = compare_selver_vs_coop(query=query)["selver_cheapest"]
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        soup = BeautifulSoup(r.text, "html.parser")
 
-    if data:
-        return jsonify({
-            "name": data.name,
-            "price": data.price_eur,
-            "url": data.url
-        })
+        products = []
 
-    return jsonify({"error": "no data"})
+        for a in soup.select("a[href*='/toode/']")[:20]:
+            name = a.get_text(" ", strip=True)
 
+            if not name or len(name) < 3:
+                continue
 
-@app.route("/coop")
-def coop():
-    query = request.args.get("q", "sai")
+            products.append({
+                "name": name,
+                "url": "https://www.selver.ee" + a.get("href")
+            })
 
-    data = compare_selver_vs_coop(query=query)["coop_cheapest"]
+        return products
 
-    if data:
-        return jsonify({
-            "name": data.name,
-            "price": data.price_eur,
-            "url": data.url
-        })
-
-    return jsonify({"error": "no data"})
+    except Exception as e:
+        return [{"error": str(e)}]
 
 
-if __name__ == "__main__":
-    app.run()
+# -------------------------
+# COOP
+# -------------------------
+def search_coop(query):
+    url = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
+
+    try:
+        r = requests.get(url, params={"search": query, "per_page": 20}, timeout=15)
+        data = r.json()
+
+        products = []
+
+        for item in data:
+            products.append({
+                "name": item.get("name"),
+                "price": item.get("prices", {}).get("price"),
+                "url": item.get("permalink")
+            })
+
+        return products
+
+    except Exception as e:
+        return [{"error": str(e)}]
