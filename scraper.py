@@ -69,50 +69,52 @@ def looks_like_sai(name: str) -> bool:
 # SELVER SCRAPER (requests fallback)
 # ----------------------------
 
-def scrape(query="sai", max_pages=2) -> List[Product]:
-    all_products: Dict[str, Product] = {}
+def scrape_with_playwright(query="sai", max_pages=1):
+    from playwright.sync_api import sync_playwright
 
-    for page in range(1, max_pages + 1):
-        try:
-            r = requests.get(
-                SEARCH_URL,
-                params={"q": query, "page": page},
-                headers={"User-Agent": USER_AGENT},
-                timeout=10,
-            )
+    BASE = "https://www.selver.ee/otsi?query=" + query
 
-            if r.status_code in (403, 429):
-                raise SelverBlockedError("Blocked")
+    results = {}
 
-            html = r.text
-        except Exception:
-            break
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
 
-        soup = BeautifulSoup(html, "html.parser")
-        cards = soup.select("div.ProductCard")
+        for i in range(1, max_pages + 1):
+            url = f"{BASE}&page={i}"
+            page.goto(url, wait_until="networkidle")
 
-        if not cards:
-            break
+            # 🔥 kriitiline: ootame päris tooteid
+            try:
+                page.wait_for_selector("h3", timeout=15000)
+            except:
+                print("NO PRODUCTS LOADED")
+                break
 
-        for card in cards:
-            link = card.select_one("h3 a[href]")
-            if not link:
-                continue
+            items = page.query_selector_all("h3")
 
-            name = normalize(link.get_text())
-            href = link.get("href")
+            for item in items:
+                name = item.inner_text().strip()
+                if not name:
+                    continue
 
-            if not name or not href:
-                continue
+                parent = item.evaluate("el => el.closest('a')")
+                href = parent.get_attribute("href") if parent else None
 
-            if not looks_like_sai(name):
-                continue
+                if not href:
+                    continue
 
-            url = href if href.startswith("http") else BASE_URL + href
+                url_full = href if href.startswith("http") else "https://www.selver.ee" + href
 
-            all_products[url] = Product(name=name, price_eur=0.0, url=url)
+                results[url_full] = Product(
+                    name=name,
+                    price_eur=0.0,
+                    url=url_full
+                )
 
-    return list(all_products.values())
+        browser.close()
+
+    return list(results.values())es())
 
 
 # ----------------------------
