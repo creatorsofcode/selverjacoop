@@ -3,11 +3,11 @@ services:
     name: selverjacoop
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python -m playwright install chromium
     startCommand: python -m gunicorn wsgi:app --bind 0.0.0.0:${PORT:-10000} --workers 2 --timeout 120 --access-logfile - --error-logfile -
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: SELVER_ENABLE_PLAYWRIGHT_FALLBACK
-        value: "0"
+        value: "1"

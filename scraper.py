@@ -1,15 +1,16 @@
-```python
+import os
 import re
 from dataclasses import dataclass
-from typing import Dict, List
+from html import unescape
+from typing import Dict, Iterable, List, Optional
+from urllib.parse import quote_plus, urljoin
 
 import requests
-
-# ----------------------------
-# CONFIG
-# ----------------------------
+from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.selver.ee"
+SELVER_SEARCH_URL = f"{BASE_URL}/search"
+COOP_API = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -18,7 +19,11 @@ USER_AGENT = (
 )
 
 HEADERS = {
-    "User-Agent": USER_AGENT
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "et-EE,et;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "User-Agent": USER_AGENT,
 }
 
 COOP_CATEGORIES = {
@@ -30,26 +35,17 @@ COOP_CATEGORIES = {
     "brioche": "brioche",
 }
 
-PRICE_RE = re.compile(r"(\d+[,.]\d{2})")
+PRICE_RE = re.compile(r"(\d+[,.]\d{1,2})\s*(?:€|&euro;|eur)", re.IGNORECASE)
+NOISE_RE = re.compile(
+    r"(lisa|ostukorvi|lemmik|hind|tavahind|kampaania|kg|g|tk|€|\d+[,.]\d{1,2})",
+    re.IGNORECASE,
+)
+SAI_INCLUDE_RE = re.compile(r"\b(sai|saiad|röstsai|rostsai|kukkel|leib|ciabatta|brioche|baguette)\b", re.IGNORECASE)
+SAI_EXCLUDE_RE = re.compile(r"(sushi|saitaku|säilitus|sailitus|supp)", re.IGNORECASE)
 
-EXCLUDE_WORDS = [
-    "sushi",
-    "supp",
-    "magus",
-]
 
-INCLUDE_PATTERNS = [
-    r"sai",
-    r"kukkel",
-    r"leib",
-    r"ciabatta",
-    r"brioche",
-    r"baguette",
-]
-
-# ----------------------------
-# MODEL
-# ----------------------------
+class SelverBlockedError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -59,217 +55,400 @@ class Product:
     url: str
 
 
-# ----------------------------
-# HELPERS
-# ----------------------------
-
-
 def normalize(text: str) -> str:
-    return " ".join(text.split()).strip()
+    return " ".join(unescape(text or "").split()).strip()
 
 
-def looks_like_sai(name: str) -> bool:
-    n = name.lower()
-
-    if any(word in n for word in EXCLUDE_WORDS):
-        return False
-
-    return any(re.search(pattern, n) for pattern in INCLUDE_PATTERNS)
-
-
-# ----------------------------
-# SELVER
-# ----------------------------
+def _price_from_text(text: str) -> Optional[float]:
+    match = PRICE_RE.search(text or "")
+    if not match:
+        return None
+    try:
+        return float(match.group(1).replace(",", "."))
+    except ValueError:
+        return None
 
 
-def scrape_selver(query: str = "sai", max_pages: int = 2) -> List[Product]:
-    from playwright.sync_api import sync_playwright
+def _clean_name(text: str) -> str:
+    lines = [normalize(line) for line in (text or "").splitlines()]
+    candidates = []
+    for line in lines:
+        if not line or len(line) < 3:
+            continue
+        if NOISE_RE.fullmatch(line) or PRICE_RE.search(line):
+            continue
+        candidates.append(line)
+    return candidates[0] if candidates else normalize(text)
 
-    results: Dict[str, Product] = {}
 
-    search_url = f"https://www.selver.ee/otsi?query={query}"
+def _matches_query(name: str, query: str) -> bool:
+    name = normalize(name).lower()
+    query = normalize(query or "").lower()
+    if not query:
+        return True
+
+    if query == "sai":
+        return bool(SAI_INCLUDE_RE.search(name)) and not SAI_EXCLUDE_RE.search(name)
+
+    return query in name
+
+
+def _selver_url(query: str, page: int) -> str:
+    return f"{SELVER_SEARCH_URL}?q={quote_plus(query)}&page={page}&limit=48"
+
+
+def _dedupe(products: Iterable[Product]) -> List[Product]:
+    seen: Dict[str, Product] = {}
+    for product in products:
+        key = product.url or product.name.lower()
+        if key not in seen:
+            seen[key] = product
+    return list(seen.values())
+
+
+def _parse_selver_html(html: str, query: str = "") -> List[Product]:
+    soup = BeautifulSoup(html or "", "html.parser")
+    products: List[Product] = []
+
+    for card in soup.select(".ProductCard"):
+        link = (
+            card.select_one(".ProductCard__name a[href]")
+            or card.select_one("a[data-testid='productLink'][href]")
+            or card.select_one("a[href]")
+        )
+        if not link:
+            continue
+
+        href = link.get("href")
+        if not href:
+            continue
+
+        image = card.select_one("img[alt]")
+        name = _clean_name(link.get_text(" ", strip=True))
+        if not name and image:
+            name = _clean_name(image.get("alt", ""))
+        if not name:
+            name = _name_from_url(href)
+        if not name:
+            continue
+        if not _matches_query(name, query):
+            continue
+
+        price_node = card.select_one(".ProductPrice")
+        price_text = price_node.get_text(" ", strip=True) if price_node else card.get_text(" ", strip=True)
+        price = _price_from_text(price_text) or 0.0
+
+        products.append(Product(name=name, price_eur=price, url=urljoin(BASE_URL, href)))
+
+    if products:
+        return _dedupe(products)
+
+    selectors = [
+        "a[data-testid='productLink']",
+        "h3 a[href]",
+        "[class*='product'] a[href]",
+        "a[href*='/toode/']",
+        "a[href*='/product/']",
+    ]
+
+    for selector in selectors:
+        for link in soup.select(selector):
+            href = link.get("href")
+            if not href:
+                continue
+
+            card = link
+            for _ in range(5):
+                if card.parent is None:
+                    break
+                card = card.parent
+
+            raw_name = link.get_text(" ", strip=True) or card.get_text("\n", strip=True)
+            name = _clean_name(raw_name)
+            if not name:
+                continue
+
+            price = _price_from_text(card.get_text(" ", strip=True)) or 0.0
+            full_url = urljoin(BASE_URL, href)
+            if BASE_URL not in full_url:
+                continue
+
+            if query and not _matches_query(name, query):
+                continue
+
+            products.append(Product(name=name, price_eur=price, url=full_url))
+
+        if products:
+            break
+
+    return _dedupe(products)
+
+
+def _name_from_url(href: str) -> str:
+    slug = (href or "").strip("/").split("/")[-1]
+    if not slug:
+        return ""
+
+    words = []
+    for part in slug.split("-"):
+        if not part:
+            continue
+        if part.isdigit():
+            words.append(part)
+        elif len(part) == 1 and part.lower() in {"g", "l"}:
+            words.append(part)
+        else:
+            words.append(part.capitalize())
+
+    return normalize(" ".join(words))
+
+
+def scrape(query: str = "sai", max_pages: int = 2) -> List[Product]:
+    products: List[Product] = []
+
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
+    for page in range(1, max_pages + 1):
+        response = session.get(_selver_url(query, page), timeout=15)
+
+        if response.status_code in {401, 403, 429, 503}:
+            raise SelverBlockedError(
+                f"Selver returned HTTP {response.status_code}; server may be blocked by anti-bot protection."
+            )
+
+        response.raise_for_status()
+        page_products = _parse_selver_html(response.text, query)
+        if not page_products:
+            break
+        products.extend(page_products)
+
+    return _dedupe(products)
+
+
+def _product_from_playwright_card(card, query: str) -> Optional[Product]:
+    link = card.locator("a[href]").first
+    if link.count() == 0:
+        return None
+
+    href = link.get_attribute("href")
+    if not href:
+        return None
+
+    name = ""
+    for selector in [
+        "[data-testid*='name' i]",
+        "[class*='name' i]",
+        "[class*='title' i]",
+        "h3",
+        "a[href]",
+    ]:
+        candidate = card.locator(selector).first
+        if candidate.count():
+            name = _clean_name(candidate.inner_text(timeout=1500))
+            if name:
+                break
+
+    if not name:
+        name = _clean_name(card.inner_text(timeout=1500))
+    if not name:
+        return None
+
+    price = _price_from_text(card.inner_text(timeout=1500)) or 0.0
+    if query and not _matches_query(name, query):
+        return None
+
+    return Product(name=name, price_eur=price, url=urljoin(BASE_URL, href))
+
+
+def scrape_with_playwright(query: str = "sai", max_pages: int = 2) -> List[Product]:
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:
+        raise RuntimeError("Playwright is not installed correctly.") from exc
+
+    products: List[Product] = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=["--no-sandbox"]
+            args=[
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--no-sandbox",
+            ],
         )
-
         page = browser.new_page(
-            user_agent=USER_AGENT
+            extra_http_headers=HEADERS,
+            locale="et-EE",
+            user_agent=USER_AGENT,
+            viewport={"width": 1365, "height": 900},
         )
 
-        for page_num in range(1, max_pages + 1):
-            try:
-                url = f"{search_url}&page={page_num}"
-
-                page.goto(
-                    url,
-                    wait_until="networkidle",
-                    timeout=30000
+        try:
+            for page_num in range(1, max_pages + 1):
+                response = page.goto(
+                    _selver_url(query, page_num),
+                    wait_until="domcontentloaded",
+                    timeout=30000,
                 )
 
-                page.wait_for_timeout(2000)
+                if response and response.status in {401, 403, 429, 503}:
+                    raise SelverBlockedError(
+                        f"Selver returned HTTP {response.status}; server may be blocked by anti-bot protection."
+                    )
 
-                items = page.query_selector_all(
-                    "a[data-testid='productLink']"
-                )
+                try:
+                    page.wait_for_selector(
+                        "a[data-testid='productLink'], h3 a[href], [class*='product' i] a[href]",
+                        timeout=12000,
+                    )
+                except PlaywrightTimeoutError:
+                    pass
 
-                if not items:
+                page.wait_for_timeout(1500)
+
+                page_products = _parse_selver_html(page.content(), query)
+                if not page_products:
+                    cards = page.locator(
+                        "[data-testid*='product' i], article, [class*='product' i]"
+                    )
+                    for i in range(min(cards.count(), 80)):
+                        try:
+                            product = _product_from_playwright_card(cards.nth(i), query)
+                            if product:
+                                page_products.append(product)
+                        except Exception:
+                            continue
+
+                if not page_products:
+                    if page_num == 1:
+                        body = normalize(page.locator("body").inner_text(timeout=3000))
+                        if any(token in body.lower() for token in ["cloudflare", "access denied", "captcha"]):
+                            raise SelverBlockedError("Selver anti-bot page was shown.")
                     break
 
-                for item in items:
-                    try:
-                        name = normalize(item.inner_text())
+                products.extend(page_products)
+        finally:
+            browser.close()
 
-                        href = item.get_attribute("href")
-
-                        if not name or not href:
-                            continue
-
-                        full_url = (
-                            href
-                            if href.startswith("http")
-                            else BASE_URL + href
-                        )
-
-                        if full_url in results:
-                            continue
-
-                        results[full_url] = Product(
-                            name=name,
-                            price_eur=0.0,
-                            url=full_url,
-                        )
-
-                    except Exception:
-                        continue
-
-            except Exception:
-                continue
-
-        browser.close()
-
-    return list(results.values())
+    return _dedupe(products)
 
 
-# ----------------------------
-# COOP
-# ----------------------------
-
-COOP_API = (
-    "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
-)
+def scrape_selver(query: str = "sai", max_pages: int = 2) -> List[Product]:
+    return scrape_with_playwright(query, max_pages)
 
 
-def scrape_coop(query: str = "sai") -> List[Product]:
-    try:
+def _coop_search_term(query: str, coop_category_url: Optional[str]) -> str:
+    return (coop_category_url or query or "sai").strip()
+
+
+def scrape_coop(
+    query: str = "sai",
+    coop_category_url: Optional[str] = None,
+    max_pages: int = 2,
+) -> List[Product]:
+    results: List[Product] = []
+    term = _coop_search_term(query, coop_category_url)
+
+    for page in range(1, max_pages + 1):
         response = requests.get(
             COOP_API,
-            params={
-                "search": query,
-                "per_page": 20,
-            },
+            params={"search": term, "per_page": 20, "page": page},
             headers=HEADERS,
             timeout=15,
         )
 
+        if response.status_code == 400 and page > 1:
+            break
         response.raise_for_status()
-
         data = response.json()
+        if not data:
+            break
 
-    except Exception:
-        return []
-
-    results: List[Product] = []
-
-    for item in data:
-        try:
-            name = item.get("name")
-            url = item.get("permalink")
-
-            if not name or not url:
-                continue
-
-            prices = item.get("prices", {})
-
-            price_raw = prices.get("price")
-
-            if price_raw is None:
-                continue
-
-            price_eur = float(price_raw) / 100
-
-            results.append(
-                Product(
-                    name=name,
-                    price_eur=price_eur,
-                    url=url,
+        for item in data:
+            try:
+                price_raw = item.get("prices", {}).get("price")
+                if price_raw is None:
+                    continue
+                name = normalize(item.get("name"))
+                if not _matches_query(name, query):
+                    continue
+                results.append(
+                    Product(
+                        name=name,
+                        price_eur=float(price_raw) / 100,
+                        url=item.get("permalink"),
+                    )
                 )
-            )
+            except Exception:
+                continue
 
-        except Exception:
-            continue
-
-    return results
+    return _dedupe(results)
 
 
-# ----------------------------
-# COMPARE
-# ----------------------------
+def scrape_coop_with_playwright(
+    coop_category_url: str = "sai",
+    max_pages: int = 2,
+) -> List[Product]:
+    return scrape_coop(coop_category_url, coop_category_url, max_pages)
 
 
-def compare_selver_vs_coop(query: str = "sai"):
-    selver = scrape_selver(query)
-    coop = scrape_coop(query)
+def _best(products: List[Product]) -> Optional[Product]:
+    priced = [product for product in products if product.price_eur > 0]
+    return min(priced, key=lambda product: product.price_eur) if priced else None
 
-    # Coopil on hinnad olemas
-    coop = [p for p in coop if p.price_eur > 0]
 
-    # Selveris praegu hinnad puuduvad
-    selver = [p for p in selver if p.price_eur > 0]
-
-    selver_best = (
-        min(selver, key=lambda p: p.price_eur)
-        if selver
-        else None
-    )
-
-    coop_best = (
-        min(coop, key=lambda p: p.price_eur)
-        if coop
-        else None
-    )
-
-    if not selver_best and not coop_best:
-        return {
-            "winner": "no-data",
-            "selver_best": None,
-            "coop_best": None,
-            "selver_count": 0,
-            "coop_count": 0,
-        }
-
-    if selver_best and coop_best:
-        winner = (
-            "selver"
-            if selver_best.price_eur < coop_best.price_eur
-            else "coop"
-        )
-    elif selver_best:
-        winner = "selver"
+def compare_selver_vs_coop(
+    query: str = "sai",
+    max_pages: int = 2,
+    coop_category_url: Optional[str] = None,
+    engine: str = "auto",
+):
+    if engine == "requests":
+        selver_products = scrape(query, max_pages)
     else:
+        selver_products = scrape_with_playwright(query, max_pages)
+
+    coop_products = scrape_coop(query, coop_category_url, max_pages)
+    selver_cheapest = _best(selver_products)
+    coop_cheapest = _best(coop_products)
+
+    price_diff_eur = None
+    price_diff_pct = None
+    winner = "no-data"
+
+    if selver_cheapest and coop_cheapest:
+        price_diff_eur = abs(selver_cheapest.price_eur - coop_cheapest.price_eur)
+        base = max(selver_cheapest.price_eur, coop_cheapest.price_eur)
+        price_diff_pct = (price_diff_eur / base * 100) if base else 0
+        winner = "selver" if selver_cheapest.price_eur < coop_cheapest.price_eur else "coop"
+    elif selver_cheapest:
+        winner = "selver"
+    elif coop_cheapest:
         winner = "coop"
 
+    if winner == "no-data":
+        summary = "Ei leidnud hinnaga tooteid kummastki poest."
+    elif winner == "selver":
+        summary = "Selverist leiti odavam hinnaga toode."
+    else:
+        summary = "Coopist leiti odavam hinnaga toode."
+
     return {
+        "query": query,
+        "summary": summary,
         "winner": winner,
-        "selver_best": selver_best,
-        "coop_best": coop_best,
-        "selver_count": len(selver),
-        "coop_count": len(coop),
+        "selver_cheapest": selver_cheapest,
+        "coop_cheapest": coop_cheapest,
+        "selver_count": len(selver_products),
+        "coop_count": len(coop_products),
+        "price_diff_eur": price_diff_eur,
+        "price_diff_pct": price_diff_pct,
     }
 
 
 if __name__ == "__main__":
-    print(compare_selver_vs_coop("sai"))
-```
+    selected_engine = os.getenv("ENGINE", "playwright")
+    print(compare_selver_vs_coop("sai", engine=selected_engine))
