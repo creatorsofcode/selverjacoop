@@ -131,11 +131,11 @@
             text-align: center;
             font-size: 14px;
         }
-        .store-selver { border-top-color: #dc3545; opacity: 0.7; }
-        .store-selver .no-results { color: #dc3545; }
         .store-coop { border-top-color: #28a745; }
+        .store-rimi { border-top-color: #ff6b6b; }
         .store-prisma { border-top-color: #ffc107; }
         .store-maxima { border-top-color: #17a2b8; }
+        .store-selver { border-top-color: #dc3545; opacity: 0.7; }
         .total-count {
             text-align: center;
             padding: 15px;
@@ -155,7 +155,7 @@
 <body>
     <div class="container">
         <h1>🛒 Eesti poodide hinnavõrdlus</h1>
-        <p class="subtitle">Coop · Prisma · Maxima · Selver (ei pruugi töötada)</p>
+        <p class="subtitle">Coop · Rimi · Prisma · Maxima · Selver</p>
         
         <div class="search-box">
             <input type="text" id="searchInput" placeholder="Otsi toodet (nt: sai, leib, piim, kohv...)" value="sai">
@@ -200,12 +200,12 @@
             
             const storeColors = {
                 'Coop': 'store-coop',
+                'Rimi': 'store-rimi',
                 'Prisma': 'store-prisma',
                 'Maxima': 'store-maxima',
                 'Selver': 'store-selver'
             };
             
-            // Kuva koguarv
             totalContainer.innerHTML = `📊 Leitud <strong>${data.total_count || 0}</strong> toodet`;
             
             container.innerHTML = data.stores.map(store => `
@@ -224,7 +224,7 @@
                             </div>
                         `).join('') 
                         : `<div class="no-results">
-                            ${store.name === 'Selver' ? '⚠️ Selver ei tööta Renderis (Cloudflare blokeerib)' : 'Tooteid ei leitud'}
+                            ${store.name === 'Selver' ? '⚠️ Selver ei tööta Renderis (Cloudflare)' : 'Tooteid ei leitud'}
                         </div>`
                     }
                 </div>
@@ -239,12 +239,10 @@
             return div.innerHTML;
         }
 
-        // Otsing enter klahviga
         document.getElementById('searchInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') search();
         });
         
-        // Automaatne otsing lehe laadimisel
         window.onload = search;
     </script>
 </body>
