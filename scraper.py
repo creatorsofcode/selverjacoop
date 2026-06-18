@@ -243,47 +243,80 @@ def scrape_with_playwright(query="sai", max_pages=2) -> List[Product]:
     plain requests.get() returns an empty HTML shell with no products at
     all. This uses a real headless browser to execute the page's JS and
     wait for product cards to actually appear before parsing.
+
+    Logs diagnostic info via print() (visible in Render's runtime logs)
+    so failures - missing browser binary, blocked/Cloudflare-challenged
+    requests, selector mismatch, etc. - are visible instead of silently
+    turning into "no products found".
     """
     try:
         from playwright.sync_api import sync_playwright
-    except ImportError:
-        # Playwright isn't installed in this environment - fall back, but
-        # note that the plain `scrape()` path will likely return nothing
-        # for Selver since its content is JS-rendered.
+    except ImportError as e:
+        print(f"[selver] Playwright package not installed: {e}")
+        # Falls back, but this will almost certainly return nothing for
+        # Selver since its content is JS-rendered.
         return scrape(query=query, max_pages=max_pages)
 
     all_products: Dict[str, Product] = {}
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            page = browser.new_page(user_agent=USER_AGENT)
+    try:
+        with sync_playwright() as p:
+            try:
+                browser = p.chromium.launch(headless=True)
+            except Exception as e:
+                print(f"[selver] FAILED to launch Chromium - browser binary likely "
+                      f"missing on this server (run `playwright install --with-deps "
+                      f"chromium` in the build step): {e}")
+                return []
 
-            for page_num in range(1, max_pages + 1):
-                url = f"{SEARCH_URL}?q={query}&page={page_num}"
-                try:
-                    page.goto(url, timeout=20000, wait_until="networkidle")
-                    # Wait for actual product cards to render before reading HTML
-                    page.wait_for_selector("div.ProductCard", timeout=8000)
-                    page.wait_for_timeout(1000)
-                except Exception:
-                    break
+            try:
+                page = browser.new_page(user_agent=USER_AGENT)
 
-                html = page.content()
-                products = parse_products(html)
+                for page_num in range(1, max_pages + 1):
+                    url = f"{SEARCH_URL}?q={query}&page={page_num}"
+                    try:
+                        response = page.goto(url, timeout=20000, wait_until="networkidle")
+                        status = response.status if response else None
+                        print(f"[selver] page {page_num}: goto {url} -> HTTP {status}")
+                        page.wait_for_selector("div.ProductCard", timeout=8000)
+                        page.wait_for_timeout(1000)
+                    except Exception as e:
+                        try:
+                            html_now = page.content()
+                            print(f"[selver] page {page_num}: wait/load failed ({e}). "
+                                  f"html length={len(html_now)}, "
+                                  f"contains 'ProductCard'={'ProductCard' in html_now}, "
+                                  f"contains 'cloudflare'={'cloudflare' in html_now.lower()}, "
+                                  f"contains 'captcha'={'captcha' in html_now.lower()}, "
+                                  f"snippet={html_now[:300]!r}")
+                        except Exception as inner_e:
+                            print(f"[selver] page {page_num}: wait/load failed ({e}); "
+                                  f"could not even read page content: {inner_e}")
+                        break
 
-                if not products:
-                    break
+                    html = page.content()
+                    print(f"[selver] page {page_num}: html length={len(html)}, "
+                          f"'ProductCard' occurrences={html.count('ProductCard')}")
 
-                before = len(all_products)
-                for prod in products:
-                    all_products[prod.url] = prod
+                    products = parse_products(html)
+                    print(f"[selver] page {page_num}: parsed {len(products)} matching products")
 
-                if len(all_products) == before:
-                    break
-        finally:
-            browser.close()
+                    if not products:
+                        break
 
+                    before = len(all_products)
+                    for prod in products:
+                        all_products[prod.url] = prod
+
+                    if len(all_products) == before:
+                        break
+            finally:
+                browser.close()
+    except Exception as e:
+        print(f"[selver] Unexpected Playwright error: {e}")
+        return []
+
+    print(f"[selver] TOTAL unique products found: {len(all_products)}")
     return sorted(all_products.values(), key=lambda x: x.price_eur)
 
 
