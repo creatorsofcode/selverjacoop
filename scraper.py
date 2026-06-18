@@ -1,15 +1,25 @@
 import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from html import unescape
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 from urllib.parse import quote_plus, urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
-if os.getenv("RENDER") and not os.getenv("PLAYWRIGHT_BROWSERS_PATH"):
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/project/.cache/ms-playwright"
+RENDER_PLAYWRIGHT_PATH = "/opt/render/project/.cache/ms-playwright"
+IS_RENDER = bool(
+    os.getenv("RENDER")
+    or os.getenv("RENDER_SERVICE_ID")
+    or os.path.isdir("/opt/render/project")
+)
+
+if IS_RENDER and not os.getenv("PLAYWRIGHT_BROWSERS_PATH"):
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = RENDER_PLAYWRIGHT_PATH
 
 BASE_URL = "https://www.selver.ee"
 SELVER_SEARCH_URL = f"{BASE_URL}/search"
@@ -107,6 +117,22 @@ def _dedupe(products: Iterable[Product]) -> List[Product]:
         if key not in seen:
             seen[key] = product
     return list(seen.values())
+
+
+def _ensure_playwright_browser_installed() -> None:
+    if not IS_RENDER:
+        return
+
+    browser_path = Path(os.environ.get("PLAYWRIGHT_BROWSERS_PATH", RENDER_PLAYWRIGHT_PATH))
+    if any(browser_path.glob("chromium-*/chrome-linux/chrome")):
+        return
+
+    browser_path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        check=True,
+        timeout=180,
+    )
 
 
 def _parse_selver_html(html: str, query: str = "") -> List[Product]:
@@ -273,15 +299,26 @@ def scrape_with_playwright(query: str = "sai", max_pages: int = 2) -> List[Produ
 
     products: List[Product] = []
 
+    _ensure_playwright_browser_installed()
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
+        launch_args = {
+            "headless": True,
+            "args": [
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--no-sandbox",
             ],
-        )
+        }
+
+        try:
+            browser = p.chromium.launch(**launch_args)
+        except Exception as exc:
+            if "Executable doesn't exist" not in str(exc):
+                raise
+            _ensure_playwright_browser_installed()
+            browser = p.chromium.launch(**launch_args)
+
         page = browser.new_page(
             extra_http_headers=HEADERS,
             locale="et-EE",
