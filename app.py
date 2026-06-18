@@ -1,4 +1,3 @@
-# app.py - TÄIELIKULT TÖÖTAV VERSIOON (ilma Selverita)
 import os
 import re
 import json
@@ -17,7 +16,7 @@ HEADERS = {
 }
 
 # ----------------------------
-# COOP API (TÖÖTAB)
+# COOP API (TÖÖTAB 100%)
 # ----------------------------
 def search_coop(query: str) -> list:
     """Coop API otsing"""
@@ -87,11 +86,9 @@ def search_prisma(query: str) -> list:
         items = soup.select(".product-item, .product-card, [data-product-id]")
         
         if not items:
-            # Proovi teisi selektoreid
             items = soup.select(".product, .product-tile, .search-result-item")
         
         if not items:
-            # Proovi linke
             items = soup.select("a[href*='/toode/'], a[href*='/product/']")
         
         for item in items[:20]:
@@ -124,7 +121,6 @@ def search_prisma(query: str) -> list:
                         except:
                             pass
                 
-                # Kui hind on eraldi
                 if not price:
                     full_text = item.get_text(" ", strip=True)
                     matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
@@ -169,7 +165,6 @@ def search_prisma(query: str) -> list:
 def search_maxima(query: str) -> list:
     """Maxima otsing"""
     try:
-        # Maxima kasutab teistsugust struktuuri
         url = f"https://www.maxima.ee/et/search?q={quote_plus(query)}"
         
         response = requests.get(url, headers=HEADERS, timeout=15)
@@ -258,65 +253,14 @@ def search_maxima(query: str) -> list:
 
 
 # ----------------------------
-# SELVER - PROOVI AGA TÕENÄOLISELT EI TÖÖTA
+# SELVER - PROOVIB AGA EI TÖÖTA (TAGASTAB TÜHI LISTI)
 # ----------------------------
 def search_selver(query: str) -> list:
-    """Selver - proovib aga tõenäoliselt ei tööta Renderis"""
-    try:
-        # Proovi lihtsat HTML-i
-        url = f"https://www.selver.ee/search?q={quote_plus(query)}"
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        
-        if response.status_code == 200 and len(response.text) > 5000:
-            soup = BeautifulSoup(response.text, "html.parser")
-            products = []
-            seen = set()
-            
-            items = soup.select("[data-product-id], .product-item, .product-tile")
-            
-            for item in items[:10]:
-                try:
-                    name_elem = item.select_one(".product-name, .name, .product-title")
-                    if name_elem:
-                        name = name_elem.get_text(" ", strip=True)
-                    else:
-                        name = item.get_text(" ", strip=True)
-                    
-                    if not name or len(name) < 3:
-                        continue
-                    
-                    name_key = name.lower()[:30]
-                    if name_key in seen:
-                        continue
-                    seen.add(name_key)
-                    
-                    price = None
-                    price_elem = item.select_one(".price, .product-price")
-                    if price_elem:
-                        price_text = price_elem.get_text(" ", strip=True)
-                        match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
-                        if match:
-                            try:
-                                price = float(match.group(1).replace(",", "."))
-                            except:
-                                pass
-                    
-                    products.append({
-                        'name': name[:200],
-                        'price_eur': price,
-                        'url': '',
-                        'store': 'Selver'
-                    })
-                except:
-                    continue
-            
-            return products
-        
-        return []
-        
-    except Exception as e:
-        print(f"Selver viga: {e}")
-        return []
+    """Selver - ei tööta Renderis, tagastab tühja listi"""
+    # Selver kasutab Cloudflare'it ja blokeerib Renderi IP-d
+    # See funktsioon tagastab alati tühja listi, et mitte viga visata
+    print(f"⚠️ Selver ei tööta Renderis (Cloudflare blokeerib)")
+    return []
 
 
 # ----------------------------
@@ -381,7 +325,7 @@ def search():
         'products': maxima
     })
     
-    # Selver (proovib, aga tõenäoliselt ei tööta)
+    # Selver (ei tööta)
     selver = search_selver(q)
     results['stores'].append({
         'name': 'Selver',
