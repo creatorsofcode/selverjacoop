@@ -1,5 +1,6 @@
-flask
-gunicorn
-requests
+playwright
 beautifulsoup4
+requests
+flask
 cloudscraper
+gunicorn
