@@ -185,12 +185,12 @@ def scrape_with_playwright(query="sai", max_pages=2) -> List[Product]:
 
                 page.goto(url, wait_until="domcontentloaded")
 
-                # 🔥 WAIT + SCROLL (kriitiline Selveri jaoks)
+                # 🔥 FIX: render + scroll
                 page.wait_for_timeout(3000)
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(2000)
 
-                # 🔥 STABIILNE SELECTOR (mitte ProductCard)
+                # 🔥 stabiilne selector
                 page.wait_for_selector("a[data-testid='productLink']", timeout=15000)
 
                 items = page.query_selector_all("a[data-testid='productLink']")
@@ -216,7 +216,7 @@ def scrape_with_playwright(query="sai", max_pages=2) -> List[Product]:
 
                         products.append(Product(
                             name=name,
-                            price_eur=0.0,  # Selveri search view ei anna alati hinda
+                            price_eur=0.0,
                             url=href
                         ))
 
