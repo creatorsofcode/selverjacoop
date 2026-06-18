@@ -169,9 +169,15 @@ def scrape(query="sai", max_pages=2) -> List[Product]:
 # ----------------------------
 
 COOP_API = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
+COOP_BASE = "https://coophaapsalu.ee"
+COOP_CATEGORIES = {
+    "Saiad, sepikud": COOP_BASE + "/tootekategooria/pagaritooted/saiad/",
+    "Leivad": COOP_BASE + "/tootekategooria/pagaritooted/leivad/",
+    "Pagaritooted (koik)": COOP_BASE + "/tootekategooria/pagaritooted/",
+}
 
 
-def scrape_coop(query="sai", max_pages=1) -> List[Product]:
+def scrape_coop(query="sai", category_url: str = "", max_pages=1) -> List[Product]:
     session = new_session()
     results = []
 
@@ -197,32 +203,70 @@ def scrape_coop(query="sai", max_pages=1) -> List[Product]:
     return results
 
 
+def scrape_with_playwright(query="sai", max_pages=2) -> List[Product]:
+    # Lightweight fallback to keep API compatibility when Playwright is unavailable.
+    return scrape(query=query, max_pages=max_pages)
+
+
+def scrape_coop_with_playwright(category_url: str = "", max_pages=1) -> List[Product]:
+    # Lightweight fallback to keep API compatibility when Playwright is unavailable.
+    return scrape_coop(query="sai", category_url=category_url, max_pages=max_pages)
+
+
 # ----------------------------
 # COMPARE (SAFE)
 # ----------------------------
 
-def compare_selver_vs_coop(query="sai", max_pages=2):
+def compare_selver_vs_coop(
+    query="sai",
+    max_pages=2,
+    coop_category_url: str = "",
+    engine: str = "auto",
+):
     selver = scrape(query, max_pages)
-    coop = scrape_coop(query, max_pages)
+    coop = scrape_coop(query=query, category_url=coop_category_url, max_pages=max_pages)
 
     selver = [p for p in selver if p.price_eur > 0]
     coop = [p for p in coop if p.price_eur > 0]
 
     if not selver and not coop:
-        return {"winner": "none", "selver": None, "coop": None}
+        return {
+            "query": query,
+            "selver_count": 0,
+            "coop_count": 0,
+            "winner_store": "no-data",
+            "price_diff_eur": None,
+            "price_diff_pct": None,
+            "selver_cheapest": None,
+            "coop_cheapest": None,
+            "summary": "Molemast poest ei leitud sobivaid tooteid.",
+        }
 
     selver_best = min(selver, key=lambda x: x.price_eur) if selver else None
     coop_best = min(coop, key=lambda x: x.price_eur) if coop else None
 
     if selver_best and coop_best:
         winner = "selver" if selver_best.price_eur < coop_best.price_eur else "coop"
+        diff_eur = round(abs(selver_best.price_eur - coop_best.price_eur), 2)
+        max_price = max(selver_best.price_eur, coop_best.price_eur)
+        diff_pct = round((diff_eur / max_price) * 100, 2) if max_price > 0 else None
     elif selver_best:
         winner = "selver"
+        diff_eur = None
+        diff_pct = None
     else:
         winner = "coop"
+        diff_eur = None
+        diff_pct = None
 
     return {
-        "winner": winner,
-        "selver": selver_best,
-        "coop": coop_best,
+        "query": query,
+        "selver_count": len(selver),
+        "coop_count": len(coop),
+        "winner_store": winner,
+        "price_diff_eur": diff_eur,
+        "price_diff_pct": diff_pct,
+        "selver_cheapest": selver_best,
+        "coop_cheapest": coop_best,
+        "summary": "Vordlus tehtud.",
     }
