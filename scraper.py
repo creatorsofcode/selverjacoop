@@ -112,9 +112,14 @@ def scrape_with_playwright(query="sai", max_pages=1):
                     url=url_full
                 )
 
-        browser.close()
+browser.close()
+results[full_url] = Product(
+    name=name,
+    price_eur=0.0,
+    url=full_url
+)
 
-    return list(results.values())es())
+return list(results.values())
 
 
 # ----------------------------
