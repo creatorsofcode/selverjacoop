@@ -1,412 +1,481 @@
+# app.py - TÄIELIK SKRAPER RAILWAY'LE
+import os
 import re
-import json
 import requests
+from flask import Flask, jsonify, request, render_template
 from bs4 import BeautifulSoup
-from urllib.parse import quote_plus, urljoin
-from typing import List, Dict, Optional
-import time
+from urllib.parse import quote_plus
+
+app = Flask(__name__)
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "et-EE,et;q=0.9,en;q=0.8",
+}
 
 # ----------------------------
-# SELVER SKRAPER (PARANDATUD)
+# COOP API
 # ----------------------------
-
-class SelverScraper:
-    """Selver.ee skraper klassina"""
-    
-    def __init__(self):
-        self.session = requests.Session()
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "et-EE,et;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0",
-            "Upgrade-Insecure-Requests": "1",
-            "DNT": "1",
-        }
-        self.init_session()
-    
-    def init_session(self):
-        """Initsialiseeri sessioon avalehega"""
-        try:
-            self.session.get("https://www.selver.ee", headers=self.headers, timeout=10)
-            print("✅ Selver sessioon loodud")
-        except:
-            print("⚠️ Avalehe laadimine ebaõnnestus")
-    
-    def extract_product_id(self, element) -> Optional[str]:
-        """Tõmba toote ID elementidest"""
-        # Proovi erinevaid ID atribuute
-        id_attrs = ['data-product-id', 'data-id', 'data-sku', 'id']
-        for attr in id_attrs:
-            product_id = element.get(attr)
-            if product_id:
-                return product_id
+def search_coop(query: str) -> list:
+    try:
+        url = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
+        response = requests.get(url, params={"search": query, "per_page": 20}, timeout=15)
         
-        # Proovi URList
-        link = element.select_one("a[href]")
-        if link:
-            href = link.get('href', '')
-            # Otsi /toode/123456 või /product/123456
-            match = re.search(r'/(?:toode|product)/(\d+)', href)
-            if match:
-                return match.group(1)
+        if response.status_code != 200:
+            return []
         
-        return None
-    
-    def search_products(self, query: str, max_results: int = 20) -> List[Dict]:
-        """
-        Põhiline otsingumeetod
-        """
-        encoded_query = quote_plus(query)
-        url = f"https://www.selver.ee/search?q={encoded_query}"
+        data = response.json()
+        if not isinstance(data, list):
+            return []
         
-        try:
-            print(f"🔍 Otsin: {query}")
-            response = self.session.get(url, headers=self.headers, timeout=15)
-            
-            if response.status_code != 200:
-                return [{"error": f"HTTP {response.status_code}"}]
-            
-            html = response.text
-            
-            # Kontrolli blokeeringut
-            if "cloudflare" in html.lower() or "captcha" in html.lower():
-                # Proovi API kaudu
-                return self.search_via_api(query)
-            
-            if len(html) < 5000:
-                # Proovi API kaudu
-                return self.search_via_api(query)
-            
-            # Parsimine
-            soup = BeautifulSoup(html, "html.parser")
-            products = []
-            seen_ids = set()
-            
-            # 1. Proovi leida tooted data-product-id järgi
-            product_elements = soup.select("[data-product-id]")
-            
-            # 2. Kui ei leia, proovi teisi selektoreid
-            if not product_elements:
-                selectors = [
-                    ".product-item",
-                    ".product-tile", 
-                    ".product-list__item",
-                    "li.product",
-                    ".search-results .item",
-                    "article.product",
-                    ".product-card",
-                    ".product-box"
-                ]
-                
-                for selector in selectors:
-                    elements = soup.select(selector)
-                    if elements:
-                        product_elements = elements
-                        break
-            
-            # 3. Kui ikka ei leia, proovi linke
-            if not product_elements:
-                product_elements = soup.select("a[href*='/toode/'], a[href*='/product/']")
-            
-            print(f"📦 Leitud {len(product_elements)} toodet")
-            
-            for element in product_elements[:max_results]:
-                try:
-                    # Kontrolli, kas see on juba käsitletud
-                    product_id = self.extract_product_id(element)
-                    if product_id and product_id in seen_ids:
-                        continue
-                    if product_id:
-                        seen_ids.add(product_id)
-                    
-                    # Toote nimi
-                    name = self.extract_name(element)
-                    if not name or len(name) < 3:
-                        continue
-                    
-                    # Toote hind
-                    price_eur = self.extract_price(element, product_id)
-                    
-                    # Toote URL
-                    url = self.extract_url(element)
-                    
-                    # Lisa toode
-                    product = {
-                        "name": name[:200],
-                        "price_eur": price_eur,
-                        "url": url,
-                        "product_id": product_id,
-                        "store": "Selver"
-                    }
-                    products.append(product)
-                    print(f"  ✅ {name[:50]}... {price_eur}€" if price_eur else f"  ✅ {name[:50]}...")
-                    
-                except Exception as e:
-                    print(f"  ❌ Viga: {e}")
+        products = []
+        for item in data[:20]:
+            try:
+                name = item.get('name', '')
+                if not name:
                     continue
-            
-            # Kui HTML-ist ei leitud tooteid, proovi API
-            if not products:
-                return self.search_via_api(query)
-            
-            print(f"✅ Leitud {len(products)} toodet")
-            return products
-            
-        except Exception as e:
-            # Proovi API kaudu
-            return self.search_via_api(query)
-    
-    def extract_name(self, element) -> Optional[str]:
-        """Tõmba toote nimi"""
-        name_selectors = [
-            ".product-name",
-            ".name",
-            ".product-title",
-            "[data-testid='product-name']",
-            "h2",
-            "h3",
-            ".title",
-            ".product-name a",
-            ".product-title a"
-        ]
-        
-        for selector in name_selectors:
-            name_elem = element.select_one(selector)
-            if name_elem:
-                name = name_elem.get_text(" ", strip=True)
-                if name and len(name) > 2:
-                    return name
-        
-        # Kui ei leia, võta kogu tekst
-        text = element.get_text(" ", strip=True)
-        if text and len(text) > 2:
-            # Proovi eraldada nimi (esimene osa)
-            parts = text.split('€')
-            if parts:
-                return parts[0].strip()
-        
-        return None
-    
-    def extract_price(self, element, product_id: Optional[str] = None) -> Optional[float]:
-        """Tõmba toote hind"""
-        # 1. Proovi otseseid hinnaselektoreid
-        price_selectors = [
-            ".price",
-            ".product-price",
-            ".price span",
-            ".price-value",
-            ".final-price",
-            "[data-testid='product-price']",
-            ".amount",
-            ".discounted-price",
-            ".current-price",
-            ".product-price__price"
-        ]
-        
-        for selector in price_selectors:
-            price_elem = element.select_one(selector)
-            if price_elem:
-                price_text = price_elem.get_text(" ", strip=True)
-                match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
-                if match:
+                
+                prices = item.get('prices', {})
+                raw_price = prices.get('price')
+                minor_unit = prices.get('currency_minor_unit', 2)
+                
+                price_eur = None
+                if raw_price is not None:
                     try:
-                        return float(match.group(1).replace(",", "."))
+                        price_eur = int(raw_price) / (10 ** minor_unit)
                     except:
                         pass
-        
-        # 2. Proovi kogu elemendi tekstist
-        full_text = element.get_text(" ", strip=True)
-        matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
-        if matches:
-            try:
-                return float(matches[0].replace(",", "."))
-            except:
-                pass
-        
-        # 3. Proovi API kaudu, kui product_id on teada
-        if product_id:
-            return self.get_price_via_api(product_id)
-        
-        return None
-    
-    def extract_url(self, element) -> str:
-        """Tõmba toote URL"""
-        link = element.select_one("a[href]")
-        if link:
-            href = link.get("href", "")
-            if href:
-                if href.startswith("http"):
-                    return href
-                else:
-                    return urljoin("https://www.selver.ee", href)
-        return ""
-    
-    def search_via_api(self, query: str) -> List[Dict]:
-        """
-        Proovi andmeid API kaudu
-        """
-        print("🔄 Proovin API kaudu...")
-        
-        # Selver kasutab erinevaid API endpoint'e
-        api_urls = [
-            f"https://www.selver.ee/rest/V1/search?q={quote_plus(query)}",
-            f"https://www.selver.ee/api/search?q={quote_plus(query)}",
-            f"https://www.selver.ee/graphql"
-        ]
-        
-        for api_url in api_urls:
-            try:
-                response = self.session.get(api_url, headers={
-                    **self.headers,
-                    "Accept": "application/json",
-                    "X-Requested-With": "XMLHttpRequest"
-                }, timeout=10)
                 
-                if response.status_code == 200:
-                    try:
-                        data = response.json()
-                        products = self.parse_api_response(data)
-                        if products:
-                            print(f"✅ API-st leitud {len(products)} toodet")
-                            return products
-                    except:
-                        continue
-            except:
-                continue
-        
-        return [{"error": "Tooteid ei leitud (proovitud HTML ja API)"}]
-    
-    def parse_api_response(self, data: dict) -> List[Dict]:
-        """Parsime API vastust"""
-        products = []
-        
-        # Proovi erinevaid API vastuse struktuure
-        possible_arrays = ['items', 'data', 'results', 'products', 'hits']
-        
-        items = []
-        for key in possible_arrays:
-            if key in data and isinstance(data[key], list):
-                items = data[key]
-                break
-        
-        if not items and isinstance(data, list):
-            items = data
-        
-        for item in items[:20]:
-            try:
-                if isinstance(item, dict):
-                    # Toote nimi
-                    name = item.get('name') or item.get('title') or item.get('product_name')
-                    
-                    # Hind
-                    price = None
-                    price_data = item.get('price') or item.get('prices')
-                    if isinstance(price_data, dict):
-                        price = price_data.get('price') or price_data.get('final_price')
-                    elif isinstance(price_data, (int, float)):
-                        price = price_data
-                    elif isinstance(price_data, str):
-                        price = price_data
-                    
-                    # Teisenda hind ujukomaarvuks
-                    if price:
-                        try:
-                            if isinstance(price, str):
-                                price = float(price.replace(',', '.'))
-                            elif isinstance(price, (int, float)):
-                                # Kui hind on sentides
-                                if price > 100:
-                                    price = price / 100
-                        except:
-                            price = None
-                    
-                    # URL
-                    url = item.get('url') or item.get('permalink')
-                    if url and not url.startswith('http'):
-                        url = urljoin('https://www.selver.ee', url)
-                    
-                    if name:
-                        products.append({
-                            'name': name[:200],
-                            'price_eur': price,
-                            'url': url or '',
-                            'product_id': item.get('id') or item.get('sku'),
-                            'store': 'Selver'
-                        })
+                products.append({
+                    'name': name[:200],
+                    'price_eur': price_eur,
+                    'url': item.get('permalink', ''),
+                    'store': 'Coop'
+                })
             except:
                 continue
         
         return products
-    
-    def get_price_via_api(self, product_id: str) -> Optional[float]:
-        """Proovi toote hinda API kaudu"""
-        try:
-            url = f"https://www.selver.ee/rest/V1/products/{product_id}"
-            response = self.session.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                price = data.get('price', {}).get('final_price')
-                if price:
-                    return float(price)
-        except:
-            pass
-        return None
-
-
-# ----------------------------
-# LIIDES FUNKTSIOONID
-# ----------------------------
-
-# Loo globaalne skraper
-scraper = SelverScraper()
-
-def search_selver_improved(query: str) -> List[Dict]:
-    """Liides funktsioon skraperile"""
-    return scraper.search_products(query)
-
-
-def search_selver_for_app(query: str) -> List[Dict]:
-    """App.py jaoks wrapper"""
-    results = search_selver_improved(query)
-    
-    # Kui tulemus on error, tagasta tühi list
-    if results and isinstance(results, list) and results and "error" in results[0]:
+        
+    except Exception as e:
+        print(f"Coop viga: {e}")
         return []
-    
-    return results
-
 
 # ----------------------------
-# TESTIMINE
+# PRISMA
 # ----------------------------
-def test_selver_scraper():
-    """Testi skraperit"""
-    test_queries = ["sai", "leib", "piim"]
+def search_prisma(query: str) -> list:
+    try:
+        url = f"https://www.prisma.ee/et/otsing?q={quote_plus(query)}"
+        
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        session.get("https://www.prisma.ee", timeout=10)
+        
+        response = session.get(url, timeout=15)
+        
+        if response.status_code != 200:
+            return []
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        products = []
+        seen = set()
+        
+        items = soup.select(".product-item, .product, .product-tile, [data-product-id]")
+        
+        if not items:
+            items = soup.select("a[href*='/toode/'], a[href*='/product/']")
+        
+        for item in items[:20]:
+            try:
+                name = None
+                for selector in [".product-name", ".name", ".title", "h2", "h3"]:
+                    name_elem = item.select_one(selector)
+                    if name_elem:
+                        name = name_elem.get_text(" ", strip=True)
+                        break
+                
+                if not name:
+                    name = item.get_text(" ", strip=True)
+                
+                if not name or len(name) < 3:
+                    continue
+                
+                name_key = name.lower()[:30]
+                if name_key in seen:
+                    continue
+                seen.add(name_key)
+                
+                price = None
+                for selector in [".price", ".product-price", ".price-value", ".amount"]:
+                    price_elem = item.select_one(selector)
+                    if price_elem:
+                        price_text = price_elem.get_text(" ", strip=True)
+                        match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
+                        if match:
+                            try:
+                                price = float(match.group(1).replace(",", "."))
+                                break
+                            except:
+                                pass
+                
+                if not price:
+                    full_text = item.get_text(" ", strip=True)
+                    matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
+                    if matches:
+                        try:
+                            price = float(matches[0].replace(",", "."))
+                        except:
+                            pass
+                
+                url = ""
+                link = item.select_one("a[href]")
+                if link:
+                    href = link.get("href", "")
+                    if href:
+                        if href.startswith("http"):
+                            url = href
+                        else:
+                            url = f"https://www.prisma.ee{href}"
+                
+                products.append({
+                    'name': name[:200],
+                    'price_eur': price,
+                    'url': url,
+                    'store': 'Prisma'
+                })
+                
+            except Exception as e:
+                continue
+        
+        return products
+        
+    except Exception as e:
+        print(f"Prisma viga: {e}")
+        return []
+
+# ----------------------------
+# MAXIMA
+# ----------------------------
+def search_maxima(query: str) -> list:
+    try:
+        url = f"https://www.maxima.ee/et/search?q={quote_plus(query)}"
+        
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        session.get("https://www.maxima.ee", timeout=10)
+        
+        response = session.get(url, timeout=15)
+        
+        if response.status_code != 200:
+            return []
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        products = []
+        seen = set()
+        
+        items = soup.select(".product-item, .product, .product-card, [data-product-id]")
+        
+        if not items:
+            items = soup.select("a[href*='/toode/'], a[href*='/product/']")
+        
+        for item in items[:20]:
+            try:
+                name = None
+                for selector in [".product-name", ".name", ".title", "h2", "h3"]:
+                    name_elem = item.select_one(selector)
+                    if name_elem:
+                        name = name_elem.get_text(" ", strip=True)
+                        break
+                
+                if not name:
+                    name = item.get_text(" ", strip=True)
+                
+                if not name or len(name) < 3:
+                    continue
+                
+                name_key = name.lower()[:30]
+                if name_key in seen:
+                    continue
+                seen.add(name_key)
+                
+                price = None
+                for selector in [".price", ".product-price", ".price-value", ".amount"]:
+                    price_elem = item.select_one(selector)
+                    if price_elem:
+                        price_text = price_elem.get_text(" ", strip=True)
+                        match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
+                        if match:
+                            try:
+                                price = float(match.group(1).replace(",", "."))
+                                break
+                            except:
+                                pass
+                
+                if not price:
+                    full_text = item.get_text(" ", strip=True)
+                    matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
+                    if matches:
+                        try:
+                            price = float(matches[0].replace(",", "."))
+                        except:
+                            pass
+                
+                url = ""
+                link = item.select_one("a[href]")
+                if link:
+                    href = link.get("href", "")
+                    if href:
+                        if href.startswith("http"):
+                            url = href
+                        else:
+                            url = f"https://www.maxima.ee{href}"
+                
+                products.append({
+                    'name': name[:200],
+                    'price_eur': price,
+                    'url': url,
+                    'store': 'Maxima'
+                })
+                
+            except Exception as e:
+                continue
+        
+        return products
+        
+    except Exception as e:
+        print(f"Maxima viga: {e}")
+        return []
+
+# ----------------------------
+# SELVER - PROOVIB
+# ----------------------------
+def search_selver(query: str) -> list:
+    try:
+        url = f"https://www.selver.ee/search?q={quote_plus(query)}"
+        
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        session.get("https://www.selver.ee", timeout=10)
+        
+        response = session.get(url, timeout=15)
+        
+        if response.status_code != 200 or len(response.text) < 5000:
+            return []
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        products = []
+        seen = set()
+        
+        items = soup.select("[data-product-id], .product-item, .product-tile")
+        
+        for item in items[:20]:
+            try:
+                name = None
+                for selector in [".product-name", ".name", ".product-title", "h2", "h3"]:
+                    name_elem = item.select_one(selector)
+                    if name_elem:
+                        name = name_elem.get_text(" ", strip=True)
+                        break
+                
+                if not name:
+                    name = item.get_text(" ", strip=True)
+                
+                if not name or len(name) < 3:
+                    continue
+                
+                name_key = name.lower()[:30]
+                if name_key in seen:
+                    continue
+                seen.add(name_key)
+                
+                price = None
+                for selector in [".price", ".product-price", ".price-value"]:
+                    price_elem = item.select_one(selector)
+                    if price_elem:
+                        price_text = price_elem.get_text(" ", strip=True)
+                        match = re.search(r"(\d+[.,]\d{2})\s*€?", price_text)
+                        if match:
+                            try:
+                                price = float(match.group(1).replace(",", "."))
+                                break
+                            except:
+                                pass
+                
+                if not price:
+                    full_text = item.get_text(" ", strip=True)
+                    matches = re.findall(r"(\d+[.,]\d{2})\s*€?", full_text)
+                    if matches:
+                        try:
+                            price = float(matches[0].replace(",", "."))
+                        except:
+                            pass
+                
+                url = ""
+                link = item.select_one("a[href]")
+                if link:
+                    href = link.get("href", "")
+                    if href:
+                        if href.startswith("http"):
+                            url = href
+                        else:
+                            url = f"https://www.selver.ee{href}"
+                
+                products.append({
+                    'name': name[:200],
+                    'price_eur': price,
+                    'url': url,
+                    'store': 'Selver'
+                })
+                
+            except Exception as e:
+                continue
+        
+        return products
+        
+    except Exception as e:
+        print(f"Selver viga: {e}")
+        return []
+
+# ----------------------------
+# RIMI
+# ----------------------------
+def search_rimi(query: str) -> list:
+    try:
+        url = "https://www.rimi.ee/api/products"
+        response = requests.get(url, params={"search": query, "limit": 20}, timeout=15)
+        
+        if response.status_code != 200:
+            return []
+        
+        data = response.json()
+        products = []
+        
+        items = []
+        if isinstance(data, dict):
+            items = data.get('products', data.get('data', data.get('items', [])))
+        elif isinstance(data, list):
+            items = data
+        
+        for item in items[:20]:
+            try:
+                if not isinstance(item, dict):
+                    continue
+                
+                name = item.get('name') or item.get('title') or item.get('product_name')
+                if not name:
+                    continue
+                
+                price = None
+                if 'price' in item:
+                    price = item['price']
+                elif 'prices' in item and isinstance(item['prices'], dict):
+                    price = item['prices'].get('price') or item['prices'].get('final_price')
+                
+                if price:
+                    try:
+                        if isinstance(price, str):
+                            price = float(price.replace(',', '.'))
+                        elif isinstance(price, (int, float)) and price > 100:
+                            price = price / 100
+                    except:
+                        price = None
+                
+                url = item.get('url') or item.get('permalink') or item.get('link')
+                
+                products.append({
+                    'name': name[:200],
+                    'price_eur': price,
+                    'url': url or '',
+                    'store': 'Rimi'
+                })
+            except:
+                continue
+        
+        return products
+        
+    except Exception as e:
+        print(f"Rimi viga: {e}")
+        return []
+
+# ----------------------------
+# FLASK APP
+# ----------------------------
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/ping')
+def ping():
+    return 'OK'
+
+@app.route('/health')
+def health():
+    return {'status': 'ok'}
+
+@app.route('/search', methods=['GET', 'POST', 'OPTIONS'])
+def search():
+    if request.method == 'OPTIONS':
+        response = jsonify({})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        return response
     
-    for query in test_queries:
-        print(f"\n{'='*50}")
-        print(f"TEST: {query}")
-        print('='*50)
-        
-        results = search_selver_improved(query)
-        
-        if results and "error" in results[0]:
-            print(f"❌ Viga: {results[0]['error']}")
-        else:
-            print(f"✅ Leitud {len(results)} toodet:")
-            for i, product in enumerate(results[:5], 1):
-                price_str = f"{product['price_eur']}€" if product['price_eur'] else "Hind puudub"
-                print(f"  {i}. {product['name']} - {price_str}")
-            if len(results) > 5:
-                print(f"  ... ja {len(results) - 5} veel")
+    if request.method == 'POST':
+        q = request.json.get('q', 'sai') if request.is_json else request.form.get('q', 'sai')
+    else:
+        q = request.args.get('q', 'sai')
+    
+    print(f"📡 Päring: {q}")
+    
+    # Otsi kõigist poodidest
+    results = {
+        'query': q,
+        'stores': [],
+        'total_count': 0
+    }
+    
+    stores = [
+        ('Coop', search_coop),
+        ('Prisma', search_prisma),
+        ('Maxima', search_maxima),
+        ('Rimi', search_rimi),
+        ('Selver', search_selver),
+    ]
+    
+    for name, search_func in stores:
+        try:
+            products = search_func(q)
+            results['stores'].append({
+                'name': name,
+                'count': len(products),
+                'products': products
+            })
+            results['total_count'] += len(products)
+        except Exception as e:
+            results['stores'].append({
+                'name': name,
+                'count': 0,
+                'products': [],
+                'error': str(e)
+            })
+    
+    response = jsonify(results)
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
 
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({'error': 'Not found'}), 404
 
-if __name__ == "__main__":
-    test_selver_scraper()
+@app.errorhandler(405)
+def method_not_allowed(e):
+    return jsonify({
+        'error': 'Method not allowed',
+        'allowed_methods': ['GET', 'POST', 'OPTIONS']
+    }), 405
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
