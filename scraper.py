@@ -7,7 +7,7 @@ HEADERS = {
 
 
 # -------------------------
-# SELVER (ROBUST VERSION)
+# SELVER (ROBUST)
 # -------------------------
 def search_selver(query):
     url = f"https://www.selver.ee/search?q={query}"
@@ -15,51 +15,41 @@ def search_selver(query):
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
 
-        # 🔥 kui Selver annab mingi blokeeringu / JS shelli
-        if r.status_code != 200:
-            return [{"error": f"Selver HTTP {r.status_code}"}]
+        html = r.text.lower()
 
-        html = r.text
-
-        # 🔥 kui page on JS shell / cloudflare / captcha
-        if len(html) < 1500 or "cloudflare" in html.lower():
+        # 🔥 kui leht on blokitud või JS shell
+        if r.status_code != 200 or "cloudflare" in html or len(r.text) < 1500:
             return [{"error": "Selver blocked or JS-rendered page"}]
 
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(r.text, "html.parser")
 
         products = []
 
-        # 🔥 fallback parsing (Selver HTML muutub tihti)
-        selectors = [
-            "a[href*='/toode']",
-            "a[href*='product']",
-            "a[href]"
-        ]
+        # 🔥 tolerantne selector (Selver muudab tihti HTML-i)
+        for a in soup.select("a"):
+            name = a.get_text(" ", strip=True)
 
-        for selector in selectors:
-            for a in soup.select(selector):
-                name = a.get_text(" ", strip=True)
+            if not name or len(name) < 3:
+                continue
 
-                if not name or len(name) < 3:
-                    continue
+            href = a.get("href", "")
 
-                href = a.get("href", "")
-                if not href:
-                    continue
+            if not href:
+                continue
 
-                # väldi rämpslinke
-                if "selver" in name.lower():
-                    continue
+            # väldi rämpsu
+            if "selver" in name.lower():
+                continue
 
-                products.append({
-                    "name": name,
-                    "url": "https://www.selver.ee" + href
-                })
+            if "/search" in href:
+                continue
 
-                if len(products) >= 20:
-                    break
+            products.append({
+                "name": name,
+                "url": "https://www.selver.ee" + href
+            })
 
-            if products:
+            if len(products) >= 20:
                 break
 
         if not products:
@@ -72,7 +62,7 @@ def search_selver(query):
 
 
 # -------------------------
-# COOP (STABLE API)
+# COOP (OK API)
 # -------------------------
 def search_coop(query):
     url = "https://coophaapsalu.ee/wp-json/wc/store/v1/products"
