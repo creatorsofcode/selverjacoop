@@ -16,25 +16,28 @@ def search_selver(query):
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
 
-        if r.status_code != 200:
-            return [{"error": "Selver blocked or unavailable"}]
+        html = r.text.lower()
+
+        # 🔥 block detection
+        if r.status_code != 200 or "cloudflare" in html or len(r.text) < 1500:
+            return [{"error": "Selver blocked or JS-rendered page"}]
 
         soup = BeautifulSoup(r.text, "html.parser")
 
         products = []
 
-        # tolerantne selector (Selver muutub tihti)
-        for a in soup.select("a[href]"):
+        # 🔥 ainult realistlikud product linkid
+        for a in soup.select("a[href*='toode'], a[href*='product']"):
             name = a.get_text(" ", strip=True)
+            href = a.get("href", "")
 
             if not name or len(name) < 3:
                 continue
 
-            if "selver" in name.lower():
+            if not href:
                 continue
 
-            href = a.get("href", "")
-            if not href:
+            if "selver" in name.lower():
                 continue
 
             products.append({
@@ -45,11 +48,10 @@ def search_selver(query):
             if len(products) >= 20:
                 break
 
-        return products
+        return products if products else [{"error": "No products found"}]
 
     except Exception as e:
         return [{"error": str(e)}]
-
 
 # -------------------------
 # COOP API (stabiilne)
